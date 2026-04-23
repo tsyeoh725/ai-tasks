@@ -1,0 +1,47 @@
+[Unit]
+Description=ai-tasks (Next.js task manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aitasks
+Group=aitasks
+WorkingDirectory=/srv/ai-tasks
+
+# Load secrets from the production env file. EnvironmentFile is read-only;
+# edit /srv/ai-tasks/.env.production to change values, then `systemctl restart ai-tasks`.
+EnvironmentFile=/srv/ai-tasks/.env.production
+
+# Pin a non-NEXTAUTH_URL-dependent host binding. Nginx proxies 127.0.0.1:3000.
+Environment=HOSTNAME=127.0.0.1
+Environment=NODE_ENV=production
+
+# Use the absolute path to node so PATH resolution doesn't matter.
+# If you installed Node via `nvm` for the aitasks user, this will be
+# /home/aitasks/.nvm/versions/node/v20.x/bin/node — adjust accordingly.
+# Running via `npm run start` so PORT is honored.
+ExecStart=/usr/bin/npm run start --silent
+
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+
+# --- Hardening ----------------------------------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/ai-tasks/data /srv/ai-tasks/uploads /srv/ai-tasks/.next
+# Allow binding to privileged ports? No — we stay on 3000.
+# CapabilityBoundingSet=
+
+# Generous memory for Node + better-sqlite3
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-tasks
+
+[Install]
+WantedBy=multi-user.target

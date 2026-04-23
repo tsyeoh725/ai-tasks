@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1776150912200,
+      "tag": "0000_red_starbolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776227275258,
+      "tag": "0001_outgoing_omega_red",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776235709149,
+      "tag": "0002_milky_lorna_dane",
+      "breakpoints": true
+    }
+  ]
+}
