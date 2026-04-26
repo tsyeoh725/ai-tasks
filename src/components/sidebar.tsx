@@ -16,7 +16,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  // Work mode icons
   LayoutDashboard,
   CheckSquare,
   CalendarDays,
@@ -27,11 +26,11 @@ import {
   FormInput,
   Package,
   Briefcase,
+  Building2,
   Gauge,
   FolderOpen,
   Star,
   Plus,
-  // Marketing mode icons
   Target as BrandIcon,
   LineChart,
   CheckCircle,
@@ -41,6 +40,8 @@ import {
   HeartPulse,
   ChevronDown,
   ChevronRight,
+  Users2,
+  Zap,
 } from "lucide-react";
 
 type Project = {
@@ -72,23 +73,27 @@ type NavItemProps = {
 };
 
 function NavItem({ href, active, icon, label, badge }: NavItemProps) {
+  const { setOpen } = useSidebar();
   return (
     <Link
       href={href}
+      // Close the mobile sidebar drawer immediately on click — avoids cases
+      // where the overlay intercepts the next click during route transition.
+      onClick={() => setOpen(false)}
       className={cn(
-        "group relative flex items-center gap-3 rounded-lg px-3 py-1.5 text-sm font-medium transition-all",
+        "group relative flex items-center gap-3 rounded-lg px-3 py-2 min-h-9 text-sm font-medium transition-all",
         active
-          ? "bg-white/[0.06] text-white"
-          : "text-white/60 hover:bg-white/[0.04] hover:text-white/90",
+          ? "bg-[#99ff33]/15 text-gray-900 dark:text-slate-100 font-semibold"
+          : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 hover:text-slate-900 dark:hover:text-white",
       )}
     >
       {active && (
         <span
           aria-hidden
-          className="absolute left-0 top-1.5 bottom-1.5 w-px rounded-full bg-gradient-to-b from-indigo-400 to-cyan-400 shadow-[0_0_8px_rgb(129_140_248/0.6)]"
+          className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-[#99ff33]"
         />
       )}
-      <span className={cn("shrink-0", active ? "text-indigo-300" : "text-white/50 group-hover:text-white/80")}>
+      <span className={cn("shrink-0", active ? "text-gray-800 dark:text-slate-200" : "text-slate-400 group-hover:text-slate-700 dark:group-hover:text-white")}>
         {icon}
       </span>
       <span className="truncate flex-1">{label}</span>
@@ -136,7 +141,7 @@ function CollapsibleSection({
         <button
           type="button"
           onClick={toggle}
-          className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-white/35 hover:text-white/70 transition-colors"
+          className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
           aria-expanded={open}
         >
           <ChevronRight
@@ -178,7 +183,6 @@ export function Sidebar() {
   const [mode, setMode] = useState<Mode>(() => pickModeFromPath(pathname));
   const { open: mobileOpen } = useSidebar();
 
-  // Auto-switch mode if user navigates to a route in the other module
   useEffect(() => {
     setMode(pickModeFromPath(pathname));
   }, [pathname]);
@@ -211,27 +215,27 @@ export function Sidebar() {
   return (
     <div
       className={cn(
-        "flex flex-col w-64 bg-[rgb(15_15_25/0.92)] md:bg-white/[0.02] backdrop-blur-xl border-r border-white/[0.08]",
+        "flex flex-col w-64 bg-white dark:bg-[#0d130d] border-r border-slate-200 dark:border-white/10",
         "fixed inset-y-0 top-12 left-0 z-40 transform transition-transform duration-200 ease-out",
         "md:relative md:top-0 md:translate-x-0 md:z-auto",
         mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
       )}
     >
       {/* Header: workspace + module toggle */}
-      <div className="p-3 border-b border-white/[0.06] space-y-2">
+      <div className="p-3 border-b border-slate-100 dark:border-white/10 space-y-2">
         <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center gap-2 font-semibold text-sm px-3 py-2 rounded-lg bg-white/[0.03] hover:bg-white/[0.07] border border-white/[0.06] transition-colors">
-            <div className="h-6 w-6 rounded-md bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-xs font-bold text-white shadow-[0_2px_10px_rgb(99_102_241/0.4)]">
+          <DropdownMenuTrigger className="w-full flex items-center gap-2 font-semibold text-sm px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/5 hover:bg-slate-100 dark:hover:bg-white/10 border border-slate-200 dark:border-white/10 transition-colors">
+            <div className="h-6 w-6 rounded-md bg-[#99ff33] flex items-center justify-center text-xs font-bold text-[#0d1a00]">
               {activeWorkspace === "personal"
                 ? (session?.user?.name?.[0]?.toUpperCase() || "P")
                 : (teams.find((t) => t.id === activeWorkspace)?.name[0] || "T")}
             </div>
-            <span className="truncate text-white/90">
+            <span className="truncate text-slate-800 dark:text-slate-200">
               {activeWorkspace === "personal"
                 ? "Personal"
                 : teams.find((t) => t.id === activeWorkspace)?.name || "Workspace"}
             </span>
-            <ChevronDown className="ml-auto h-4 w-4 text-white/40" />
+            <ChevronDown className="ml-auto h-4 w-4 text-slate-400" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
             <DropdownMenuItem onClick={() => setActiveWorkspace("personal")}>
@@ -251,15 +255,15 @@ export function Sidebar() {
         </DropdownMenu>
 
         {/* Module toggle */}
-        <div className="flex items-center rounded-lg bg-white/[0.03] border border-white/[0.06] p-0.5">
+        <div className="flex items-center rounded-lg bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 p-0.5">
           <button
             type="button"
             onClick={() => setMode("work")}
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all",
               mode === "work"
-                ? "bg-white/[0.08] text-white shadow-sm"
-                : "text-white/50 hover:text-white/80",
+                ? "bg-white dark:bg-white/15 text-slate-900 dark:text-white shadow-sm"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white",
             )}
           >
             <LayoutDashboard className="h-3.5 w-3.5" />
@@ -271,20 +275,20 @@ export function Sidebar() {
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all relative",
               mode === "marketing"
-                ? "bg-white/[0.08] text-white shadow-sm"
-                : "text-white/50 hover:text-white/80",
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-800",
             )}
           >
             <BarChart3 className="h-3.5 w-3.5" />
             Marketing
             {pendingApprovals > 0 && mode !== "marketing" && (
-              <span className="absolute top-0.5 right-1 h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgb(251_191_36/0.8)]" />
+              <span className="absolute top-0.5 right-1 h-1.5 w-1.5 rounded-full bg-amber-400" />
             )}
           </button>
         </div>
       </div>
 
-      {/* Navigation — varies by mode */}
+      {/* Navigation */}
       <ScrollArea className="flex-1 min-h-0 px-2 py-3">
         {mode === "work" ? (
           <WorkNav
@@ -301,13 +305,13 @@ export function Sidebar() {
       </ScrollArea>
 
       {/* User */}
-      <div className="border-t border-white/[0.06] p-2">
+      <div className="border-t border-slate-100 p-2">
         <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/[0.05] transition-colors">
-            <div className="h-7 w-7 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-xs font-semibold text-white shadow-[0_2px_12px_rgb(99_102_241/0.35)]">
+          <DropdownMenuTrigger className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+            <div className="h-7 w-7 rounded-full bg-[#99ff33] flex items-center justify-center text-xs font-semibold text-[#0d1a00]">
               {session?.user?.name?.[0]?.toUpperCase() || "?"}
             </div>
-            <span className="truncate text-sm text-white/80">{session?.user?.name || "User"}</span>
+            <span className="truncate text-sm text-slate-700">{session?.user?.name || "User"}</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-48">
             <DropdownMenuItem onClick={() => (window.location.href = "/settings")}>
@@ -353,6 +357,24 @@ function WorkNav({
           icon={<CalendarDays className="h-4 w-4" />}
         />
         <NavItem
+          href="/projects"
+          active={pathname.startsWith("/projects") || pathname.startsWith("/clients")}
+          label="Clients"
+          icon={<Building2 className="h-4 w-4" />}
+        />
+        <NavItem
+          href="/crm"
+          active={pathname.startsWith("/crm")}
+          label="CRM"
+          icon={<Zap className="h-4 w-4" />}
+        />
+        <NavItem
+          href="/team"
+          active={pathname.startsWith("/team") && !pathname.startsWith("/teams")}
+          label="My Team"
+          icon={<Users2 className="h-4 w-4" />}
+        />
+        <NavItem
           href="/ai"
           active={pathname === "/ai" || pathname.startsWith("/ai/")}
           label="AI Assistant"
@@ -360,9 +382,14 @@ function WorkNav({
         />
       </nav>
 
-      {/* Plan */}
       <CollapsibleSection label="Plan">
         <nav className="space-y-0.5">
+          <NavItem
+            href="/portfolios"
+            active={pathname.startsWith("/portfolios")}
+            label="Portfolios"
+            icon={<Briefcase className="h-4 w-4" />}
+          />
           <NavItem
             href="/goals"
             active={pathname.startsWith("/goals")}
@@ -381,16 +408,9 @@ function WorkNav({
             label="Reports"
             icon={<BarChart3 className="h-4 w-4" />}
           />
-          <NavItem
-            href="/portfolios"
-            active={pathname.startsWith("/portfolios")}
-            label="Portfolios"
-            icon={<Briefcase className="h-4 w-4" />}
-          />
         </nav>
       </CollapsibleSection>
 
-      {/* Library */}
       <CollapsibleSection label="Library">
         <nav className="space-y-0.5">
           <NavItem
@@ -398,12 +418,6 @@ function WorkNav({
             active={pathname.startsWith("/templates")}
             label="Templates"
             icon={<FileText className="h-4 w-4" />}
-          />
-          <NavItem
-            href="/forms"
-            active={pathname.startsWith("/forms")}
-            label="Forms"
-            icon={<FormInput className="h-4 w-4" />}
           />
           <NavItem
             href="/bundles"
@@ -414,7 +428,6 @@ function WorkNav({
         </nav>
       </CollapsibleSection>
 
-      {/* Favorites */}
       {favorites.length > 0 && (
         <CollapsibleSection label="Favorites">
           <nav className="space-y-0.5">
@@ -427,8 +440,8 @@ function WorkNav({
                   <span className="text-sm">{project.icon}</span>
                 ) : (
                   <span
-                    className="h-2 w-2 rounded-full shadow-[0_0_6px_currentColor]"
-                    style={{ backgroundColor: project.color, color: project.color }}
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: project.color }}
                   />
                 )
               ) : (
@@ -448,15 +461,21 @@ function WorkNav({
         </CollapsibleSection>
       )}
 
-      {/* Projects */}
       <CollapsibleSection
         label="Projects"
         action={
-          <Link href="/projects/new">
-            <Button variant="ghost" size="icon-xs" className="h-5 w-5 text-white/40 hover:text-white/80">
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </Link>
+          <div className="flex items-center gap-1">
+            <Link href="/projects">
+              <Button variant="ghost" size="icon-xs" className="h-5 w-5 text-slate-400 hover:text-slate-700" title="All projects">
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+            </Link>
+            <Link href="/projects/new">
+              <Button variant="ghost" size="icon-xs" className="h-5 w-5 text-slate-400 hover:text-slate-700" title="New project">
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
+            </Link>
+          </div>
         }
       >
         <nav className="space-y-0.5">
@@ -471,15 +490,15 @@ function WorkNav({
                   <span className="text-sm">{project.icon}</span>
                 ) : (
                   <span
-                    className="h-2 w-2 rounded-full shadow-[0_0_6px_currentColor]"
-                    style={{ backgroundColor: project.color, color: project.color }}
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: project.color }}
                   />
                 )
               }
             />
           ))}
           {projects.length === 0 && (
-            <p className="px-3 py-2 text-xs text-white/40">No projects yet</p>
+            <p className="px-3 py-2 text-xs text-slate-400">No projects yet</p>
           )}
         </nav>
       </CollapsibleSection>
@@ -496,7 +515,6 @@ function MarketingNav({
 }) {
   return (
     <div className="px-1">
-      {/* Overview */}
       <nav className="space-y-0.5">
         <NavItem
           href="/brands"
@@ -512,7 +530,6 @@ function MarketingNav({
         />
       </nav>
 
-      {/* Operate */}
       <CollapsibleSection label="Operate">
         <nav className="space-y-0.5">
           <NavItem
@@ -522,7 +539,7 @@ function MarketingNav({
             icon={<CheckCircle className="h-4 w-4" />}
             badge={
               pendingApprovals > 0 ? (
-                <span className="text-[10px] font-mono bg-amber-500/15 text-amber-300 border border-amber-400/20 px-1.5 py-0.5 rounded-full">
+                <span className="text-[10px] font-mono bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">
                   {pendingApprovals}
                 </span>
               ) : null
@@ -543,7 +560,6 @@ function MarketingNav({
         </nav>
       </CollapsibleSection>
 
-      {/* System */}
       <CollapsibleSection label="System">
         <nav className="space-y-0.5">
           <NavItem
@@ -561,14 +577,13 @@ function MarketingNav({
         </nav>
       </CollapsibleSection>
 
-      {/* Help */}
-      <div className="mt-6 mx-3 p-3 rounded-xl bg-gradient-to-br from-indigo-500/10 to-cyan-500/10 border border-white/[0.06]">
+      <div className="mt-6 mx-3 p-3 rounded-xl bg-indigo-50 border border-indigo-100">
         <div className="flex items-center gap-2 mb-1">
-          <FolderOpen className="h-3.5 w-3.5 text-indigo-300" />
-          <span className="text-[11px] font-semibold text-white/80">Linked projects</span>
+          <FolderOpen className="h-3.5 w-3.5 text-indigo-500" />
+          <span className="text-[11px] font-semibold text-slate-700">Linked projects</span>
         </div>
-        <p className="text-[10px] text-white/50 leading-relaxed">
-          Each brand has a linked project. Switch to <span className="text-white/70">Work</span> to see ad-driven tasks.
+        <p className="text-[10px] text-slate-500 leading-relaxed">
+          Each brand has a linked project. Switch to <span className="text-slate-700 font-medium">Work</span> to see ad-driven tasks.
         </p>
       </div>
     </div>
