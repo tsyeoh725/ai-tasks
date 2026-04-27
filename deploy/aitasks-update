@@ -52,7 +52,7 @@ sudo -u "$APP_USER" -H bash -lc "
 "
 
 bold "Building"
-sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm run build"
+sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && rm -rf .next && npm run build"
 
 bold "Restarting service"
 systemctl restart "$SERVICE"
