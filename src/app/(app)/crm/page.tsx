@@ -407,6 +407,7 @@ const CRM_FIELD_LABELS: Record<CrmField, string> = {
 
 function ConnectSpreadsheetDialog() {
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"url" | "file">("url");
   const [url, setUrl] = useState("");
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, CrmField | "">>({});
@@ -415,6 +416,8 @@ function ConnectSpreadsheetDialog() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<"url" | "mapping" | "done">("url");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadResult, setUploadResult] = useState<{ imported: number; skipped: number; total: number } | null>(null);
   const { success } = useToast();
 
   async function loadHeaders() {
@@ -466,8 +469,27 @@ function ConnectSpreadsheetDialog() {
     setSyncing(false);
   }
 
+  async function uploadFileNow(file: File) {
+    setSyncing(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/leads/sheets/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setUploadResult(data);
+      success({ title: `Imported ${data.imported ?? 0} leads from file` });
+      setStep("done");
+    } catch (e: any) {
+      setError(e.message || "Upload failed");
+    }
+    setSyncing(false);
+  }
+
   function reset() {
     setUrl(""); setHeaders([]); setMapping({}); setError(null); setStep("url"); setLastSync(null);
+    setUploadFile(null); setUploadResult(null); setMode("url");
   }
 
   return (
@@ -477,14 +499,33 @@ function ConnectSpreadsheetDialog() {
       </DialogTrigger>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Connect Google Spreadsheet</DialogTitle>
+          <DialogTitle>Import from Spreadsheet</DialogTitle>
         </DialogHeader>
 
-        {step === "url" && (
+        {step !== "done" && (
+          <div className="flex rounded-lg border border-gray-200 dark:border-white/10 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => { setMode("url"); setError(null); }}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "url" ? "bg-[#99ff33] text-black" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              Google Sheets URL
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode("file"); setError(null); }}
+              className={`flex-1 py-2 text-sm font-medium transition-colors ${mode === "file" ? "bg-[#99ff33] text-black" : "hover:bg-muted text-muted-foreground"}`}
+            >
+              Upload File (.xlsx / .csv)
+            </button>
+          </div>
+        )}
+
+        {step === "url" && mode === "url" && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Paste a Google Sheets URL to map and import leads. Requires the sheet to be accessible with your connected Google account.
-            </p>
+            <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-700 dark:text-blue-300">
+              The sheet must be shared as <strong>Anyone with the link can view</strong>. In Google Sheets: Share → Change to Anyone with the link → Viewer.
+            </div>
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Google Sheets URL</Label>
               <Input
@@ -505,6 +546,50 @@ function ConnectSpreadsheetDialog() {
               className="w-full btn-brand"
             >
               {loadingHeaders ? <><Loader2 size={14} className="animate-spin mr-2" /> Reading sheet…</> : "Read Sheet Headers"}
+            </Button>
+          </div>
+        )}
+
+        {step === "url" && mode === "file" && (
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Upload an Excel (.xlsx) or CSV file. Columns will be auto-detected from the header row.
+            </p>
+            <label
+              className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 cursor-pointer transition-all ${
+                uploadFile ? "border-[#99ff33] bg-[#99ff33]/5" : "border-gray-200 dark:border-white/10 hover:border-[#99ff33] hover:bg-[#99ff33]/5"
+              }`}
+            >
+              <input
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="sr-only"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) setUploadFile(f); setError(null); }}
+              />
+              <Upload size={20} className={uploadFile ? "text-[#2d5200]" : "text-gray-400"} />
+              {uploadFile ? (
+                <div className="text-center">
+                  <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{uploadFile.name}</p>
+                  <p className="text-xs text-gray-400">{(uploadFile.size / 1024).toFixed(0)} KB · click to change</p>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop file here or click to browse</p>
+                  <p className="text-xs text-gray-400">.xlsx, .xls, .csv supported</p>
+                </div>
+              )}
+            </label>
+            {error && (
+              <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
+                <AlertCircle size={14} /> {error}
+              </div>
+            )}
+            <Button
+              onClick={() => uploadFile && uploadFileNow(uploadFile)}
+              disabled={!uploadFile || syncing}
+              className="w-full btn-brand"
+            >
+              {syncing ? <><Loader2 size={14} className="animate-spin mr-2" /> Importing…</> : "Import Leads"}
             </Button>
           </div>
         )}
@@ -574,8 +659,14 @@ function ConnectSpreadsheetDialog() {
             <div className="h-12 w-12 rounded-full bg-green-50 dark:bg-green-900/20 flex items-center justify-center mx-auto">
               <CheckCircle2 size={24} className="text-green-500" />
             </div>
-            <p className="font-semibold text-gray-800 dark:text-gray-200">Sync complete</p>
-            {lastSync && <p className="text-sm text-gray-400">Last synced at {lastSync}</p>}
+            <p className="font-semibold text-gray-800 dark:text-gray-200">Import complete</p>
+            {(uploadResult || lastSync) && (
+              <p className="text-sm text-gray-400">
+                {uploadResult
+                  ? `${uploadResult.imported} imported, ${uploadResult.skipped} skipped of ${uploadResult.total} rows`
+                  : `Last synced at ${lastSync}`}
+              </p>
+            )}
             <Button onClick={() => setOpen(false)} className="w-full btn-brand">Done</Button>
           </div>
         )}

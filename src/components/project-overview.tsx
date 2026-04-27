@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -20,6 +22,23 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { ProjectClientsPanel } from "@/components/project-clients-panel";
+import {
+  Building2,
+  Tag,
+  Users,
+  Target,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  TrendingUp,
+  Calendar,
+  Pencil,
+  Check,
+  X,
+} from "lucide-react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type StatusValue = "on_track" | "at_risk" | "off_track" | "on_hold" | "complete";
 
@@ -47,6 +66,10 @@ type ProjectDetail = {
   color: string;
   description: string | null;
   teamId: string | null;
+  category?: string | null;
+  icon?: string | null;
+  clientName?: string | null;
+  clientId?: string | null;
 };
 
 type TeamMember = {
@@ -84,38 +107,54 @@ type Goal = {
   links: { entityType: string; entityId: string }[];
 };
 
-const statusStyles: Record<StatusValue, { border: string; bg: string; label: string; dot: string }> = {
+type StatusDraft = {
+  status: StatusValue;
+  summary: string;
+  highlights: string[];
+  blockers: string[];
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const STATUS_META: Record<StatusValue, { label: string; dot: string; badge: string; border: string; bg: string }> = {
   on_track: {
+    label: "On Track",
+    dot: "bg-green-500",
+    badge: "bg-green-50 text-green-700 border-green-200",
     border: "border-l-green-500",
     bg: "bg-green-500/5",
-    dot: "bg-green-500",
-    label: "On Track",
   },
   at_risk: {
+    label: "At Risk",
+    dot: "bg-amber-500",
+    badge: "bg-amber-50 text-amber-700 border-amber-200",
     border: "border-l-amber-500",
     bg: "bg-amber-500/5",
-    dot: "bg-amber-500",
-    label: "At Risk",
   },
   off_track: {
+    label: "Off Track",
+    dot: "bg-red-500",
+    badge: "bg-red-50 text-red-700 border-red-200",
     border: "border-l-red-500",
     bg: "bg-red-500/5",
-    dot: "bg-red-500",
-    label: "Off Track",
   },
   on_hold: {
+    label: "On Hold",
+    dot: "bg-gray-400",
+    badge: "bg-gray-100 text-gray-600 border-gray-200",
     border: "border-l-gray-400",
     bg: "bg-gray-500/5",
-    dot: "bg-gray-400",
-    label: "On Hold",
   },
   complete: {
+    label: "Complete",
+    dot: "bg-blue-500",
+    badge: "bg-blue-50 text-blue-700 border-blue-200",
     border: "border-l-blue-500",
     bg: "bg-blue-500/5",
-    dot: "bg-blue-500",
-    label: "Complete",
   },
 };
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeAgo(dateStr: string) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -139,12 +178,136 @@ function parseJsonArray(s: string | null): string[] {
   }
 }
 
-type StatusDraft = {
-  status: StatusValue;
-  summary: string;
-  highlights: string[];
-  blockers: string[];
-};
+function avatarInitial(name: string) {
+  return name[0]?.toUpperCase() ?? "?";
+}
+
+// ─── Inline editable text field ───────────────────────────────────────────────
+
+function InlineEditText({
+  value,
+  placeholder,
+  onSave,
+}: {
+  value: string;
+  placeholder?: string;
+  onSave: (v: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave(draft.trim());
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") handleSave();
+    if (e.key === "Escape") {
+      setDraft(value);
+      setEditing(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 flex-1 min-w-0">
+        <Input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={handleKeyDown}
+          className="h-6 text-sm px-1.5 py-0 border-[#99ff33]/50"
+          disabled={saving}
+        />
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="text-green-600 hover:text-green-700 disabled:opacity-40"
+          aria-label="Save"
+        >
+          <Check className="size-3.5" />
+        </button>
+        <button
+          onClick={() => { setDraft(value); setEditing(false); }}
+          className="text-gray-400 hover:text-gray-600"
+          aria-label="Cancel"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setDraft(value); setEditing(true); }}
+      className="group/edit flex items-center gap-1 text-sm text-gray-800 hover:text-gray-900 min-w-0"
+    >
+      <span className="truncate">{value || <span className="text-gray-400 italic">{placeholder ?? "—"}</span>}</span>
+      <Pencil className="size-3 text-gray-300 group-hover/edit:text-gray-500 shrink-0 transition-colors" />
+    </button>
+  );
+}
+
+// ─── Stat card ────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  value: number;
+  icon: React.ComponentType<{ className?: string }>;
+  accent: string; // Tailwind border-l color class
+}) {
+  return (
+    <div className={cn("bg-white rounded-xl border border-gray-200 shadow-sm border-l-4 px-4 py-3 flex items-center gap-3", accent)}>
+      <Icon className="size-4 text-gray-400 shrink-0" />
+      <div className="min-w-0">
+        <p className="text-2xl font-semibold text-gray-900 leading-none">{value}</p>
+        <p className="text-xs text-gray-500 mt-0.5 truncate">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Property row ─────────────────────────────────────────────────────────────
+
+function PropRow({
+  label,
+  icon: Icon,
+  children,
+}: {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3 py-2.5 border-b border-gray-100 last:border-0">
+      <div className="flex items-center gap-1.5 w-28 shrink-0 pt-0.5">
+        <Icon className="size-3.5 text-gray-400 shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{label}</span>
+      </div>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
+// ─── Status form ──────────────────────────────────────────────────────────────
 
 function StatusForm({
   projectId,
@@ -206,53 +369,48 @@ function StatusForm({
   return (
     <div className="space-y-4">
       <div>
-        <label className="text-sm font-medium block mb-1">Status</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 block mb-1.5">Status</label>
         <Select value={status} onValueChange={(v) => v && setStatus(v as StatusValue)}>
           <SelectTrigger className="w-full">
-            <SelectValue>
-              {statusStyles[status]?.label ?? status}
-            </SelectValue>
+            <SelectValue>{STATUS_META[status]?.label ?? status}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="on_track">On Track</SelectItem>
-            <SelectItem value="at_risk">At Risk</SelectItem>
-            <SelectItem value="off_track">Off Track</SelectItem>
-            <SelectItem value="on_hold">On Hold</SelectItem>
-            <SelectItem value="complete">Complete</SelectItem>
+            {(Object.entries(STATUS_META) as [StatusValue, typeof STATUS_META[StatusValue]][]).map(([v, m]) => (
+              <SelectItem key={v} value={v}>
+                <span className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full shrink-0", m.dot)} />
+                  {m.label}
+                </span>
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
 
       <div>
-        <label className="text-sm font-medium block mb-1">Summary</label>
+        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 block mb-1.5">Summary</label>
         <Textarea
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-          rows={4}
+          rows={3}
           placeholder="What's the current state of the project?"
+          className="resize-none"
         />
       </div>
 
       <div>
-        <label className="text-sm font-medium block mb-1">Highlights</label>
-        <div className="space-y-2">
+        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 block mb-1.5">Highlights</label>
+        <div className="space-y-1.5">
           {highlights.map((h, i) => (
-            <div key={i} className="flex gap-2">
+            <div key={i} className="flex gap-1.5">
               <Input
                 value={h}
                 onChange={(e) => updateItem("highlights", i, e.target.value)}
                 placeholder="Something notable"
               />
               {highlights.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => removeItem("highlights", i)}
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem("highlights", i)}>
+                  <X className="size-3.5" />
                 </Button>
               )}
             </div>
@@ -264,25 +422,18 @@ function StatusForm({
       </div>
 
       <div>
-        <label className="text-sm font-medium block mb-1">Blockers</label>
-        <div className="space-y-2">
+        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500 block mb-1.5">Blockers</label>
+        <div className="space-y-1.5">
           {blockers.map((b, i) => (
-            <div key={i} className="flex gap-2">
+            <div key={i} className="flex gap-1.5">
               <Input
                 value={b}
                 onChange={(e) => updateItem("blockers", i, e.target.value)}
                 placeholder="What's in the way?"
               />
               {blockers.length > 1 && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => removeItem("blockers", i)}
-                >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeItem("blockers", i)}>
+                  <X className="size-3.5" />
                 </Button>
               )}
             </div>
@@ -295,36 +446,33 @@ function StatusForm({
 
       <DialogFooter>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
-        <Button size="sm" onClick={submit} disabled={submitting || !summary.trim()}>
-          {submitting ? "Posting..." : "Post update"}
+        <Button variant="primary" size="sm" onClick={submit} disabled={submitting || !summary.trim()}>
+          {submitting ? "Posting…" : "Post update"}
         </Button>
       </DialogFooter>
     </div>
   );
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export function ProjectOverview({ project }: { project: ProjectDetail }) {
+  // ── Remote state ──────────────────────────────────────────────────────────
   const [updates, setUpdates] = useState<StatusUpdate[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [tasks, setTasks] = useState<TaskLite[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+
+  // ── Dialog state ──────────────────────────────────────────────────────────
   const [dialogOpen, setDialogOpen] = useState(false);
   const [aiDraft, setAiDraft] = useState<StatusDraft | undefined>(undefined);
   const [aiLoading, setAiLoading] = useState(false);
 
-  async function handleDraftWithAi() {
-    setAiLoading(true);
-    try {
-      const res = await fetch(`/api/projects/${project.id}/ai-status`, { method: "POST" });
-      if (!res.ok) return;
-      const data = (await res.json()) as StatusDraft;
-      setAiDraft(data);
-      setDialogOpen(true);
-    } finally {
-      setAiLoading(false);
-    }
-  }
+  // ── Linked client (from clientId FK) ─────────────────────────────────────
+  const [linkedClient, setLinkedClient] = useState<{ id: string; name: string } | null>(null);
+
+  // ── Data fetching ──────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async () => {
     const [updatesRes, tasksRes, activityRes, goalsRes] = await Promise.all([
@@ -351,6 +499,21 @@ export function ProjectOverview({ project }: { project: ProjectDetail }) {
       setGoals(data.goals || []);
     }
 
+    // Fetch project detail and resolve linked client
+    const projRes = await fetch(`/api/projects/${project.id}`);
+    if (projRes.ok) {
+      const proj = await projRes.json();
+      if (proj.clientId) {
+        const clientRes = await fetch(`/api/clients/${proj.clientId}`);
+        if (clientRes.ok) {
+          const client = await clientRes.json();
+          setLinkedClient({ id: client.id, name: client.name });
+        }
+      } else {
+        setLinkedClient(null);
+      }
+    }
+
     if (project.teamId) {
       const teamRes = await fetch(`/api/teams/${project.teamId}`);
       if (teamRes.ok) {
@@ -366,8 +529,23 @@ export function ProjectOverview({ project }: { project: ProjectDetail }) {
     fetchAll();
   }, [fetchAll]);
 
+  async function handleDraftWithAi() {
+    setAiLoading(true);
+    try {
+      const res = await fetch(`/api/projects/${project.id}/ai-status`, { method: "POST" });
+      if (!res.ok) return;
+      const data = (await res.json()) as StatusDraft;
+      setAiDraft(data);
+      setDialogOpen(true);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+
   const latest = updates[0];
-  const latestStyle = latest ? statusStyles[latest.status] : null;
+  const latestMeta = latest ? STATUS_META[latest.status] : null;
 
   const milestones = useMemo(() => {
     const soon = new Date();
@@ -378,196 +556,378 @@ export function ProjectOverview({ project }: { project: ProjectDetail }) {
       .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
   }, [tasks]);
 
-  const linkedGoals = useMemo(() => {
-    return goals.filter((g) =>
-      g.links.some((l) => l.entityType === "project" && l.entityId === project.id),
-    );
-  }, [goals, project.id]);
+  const linkedGoals = useMemo(
+    () => goals.filter((g) => g.links.some((l) => l.entityType === "project" && l.entityId === project.id)),
+    [goals, project.id],
+  );
+
+  const now = new Date();
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((t) => t.status === "done").length;
+  const inProgressTasks = tasks.filter((t) => t.status === "in_progress").length;
+  const overdueTasks = tasks.filter(
+    (t) => t.dueDate && new Date(t.dueDate) < now && t.status !== "done",
+  ).length;
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      <section>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold">Status</h2>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={handleDraftWithAi} disabled={aiLoading}>
-              <span className="mr-1" aria-hidden>{"\u2728"}</span>
-              {aiLoading ? "Drafting..." : "Draft with AI"}
-            </Button>
-            <Dialog
-              open={dialogOpen}
-              onOpenChange={(open) => {
-                setDialogOpen(open);
-                if (!open) setAiDraft(undefined);
-              }}
-            >
-              <DialogTrigger render={<Button size="sm" variant="outline" />}>
-                Update status
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>Post a status update</DialogTitle>
-                </DialogHeader>
-                <StatusForm
-                  key={aiDraft ? "ai" : "manual"}
-                  projectId={project.id}
-                  initialDraft={aiDraft}
-                  onCreated={() => {
-                    setDialogOpen(false);
-                    setAiDraft(undefined);
-                    fetchAll();
-                  }}
-                  onCancel={() => {
-                    setDialogOpen(false);
-                    setAiDraft(undefined);
-                  }}
-                />
-              </DialogContent>
-            </Dialog>
-          </div>
-        </div>
-        {latest && latestStyle ? (
-          <div
-            className={cn(
-              "border border-l-4 rounded-lg p-4",
-              latestStyle.border,
-              latestStyle.bg,
-            )}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span className={cn("h-2 w-2 rounded-full", latestStyle.dot)} />
-              <span className="text-sm font-semibold">{latestStyle.label}</span>
-              <span className="text-xs text-muted-foreground ml-auto">
-                {latest.author?.name} • {timeAgo(latest.createdAt)}
-              </span>
-            </div>
-            <p className="text-sm whitespace-pre-wrap mb-3">{latest.summary}</p>
-            {(() => {
-              const hs = parseJsonArray(latest.highlights);
-              const bs = parseJsonArray(latest.blockers);
-              return (
-                <div className="grid grid-cols-2 gap-4">
-                  {hs.length > 0 && (
-                    <div>
-                      <p className="text-xs uppercase font-semibold text-muted-foreground mb-1">Highlights</p>
-                      <ul className="text-sm space-y-1 list-disc list-inside">
-                        {hs.map((h, i) => (
-                          <li key={i}>{h}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {bs.length > 0 && (
-                    <div>
-                      <p className="text-xs uppercase font-semibold text-muted-foreground mb-1">Blockers</p>
-                      <ul className="text-sm space-y-1 list-disc list-inside">
-                        {bs.map((b, i) => (
-                          <li key={i}>{b}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground border rounded-lg p-4">
-            No status updates yet.
-          </p>
-        )}
-      </section>
+    <div className="max-w-6xl mx-auto p-6 space-y-6">
 
-      {project.description && (
-        <section>
-          <h2 className="text-lg font-semibold mb-2">Description</h2>
-          <p className="text-sm text-foreground/90 whitespace-pre-wrap">{project.description}</p>
-        </section>
-      )}
+      {/* ── Stat cards ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <StatCard label="Total Tasks" value={totalTasks} icon={TrendingUp} accent="border-l-gray-300" />
+        <StatCard label="Completed" value={completedTasks} icon={CheckCircle2} accent="border-l-green-500" />
+        <StatCard label="In Progress" value={inProgressTasks} icon={Clock} accent="border-l-blue-500" />
+        <StatCard label="Overdue" value={overdueTasks} icon={AlertTriangle} accent="border-l-red-500" />
+      </div>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Members</h2>
-        {members.length > 0 ? (
-          <div className="flex flex-wrap gap-3">
-            {members.map((m) => (
-              <div key={m.id} className="flex items-center gap-2 px-3 py-1.5 border rounded-lg">
-                <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-medium">
-                  {m.user.name[0]?.toUpperCase() || "?"}
+      {/* ── Main 2-column layout ────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
+
+        {/* ── Left column ──────────────────────────────────────────────── */}
+        <div className="space-y-5">
+
+          {/* Status section */}
+          <Card>
+            <CardHeader className="border-b border-gray-100 pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle>Status</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={handleDraftWithAi} disabled={aiLoading}>
+                    <span aria-hidden>✨</span>
+                    {aiLoading ? "Drafting…" : "Draft with AI"}
+                  </Button>
+                  <Dialog
+                    open={dialogOpen}
+                    onOpenChange={(open) => {
+                      setDialogOpen(open);
+                      if (!open) setAiDraft(undefined);
+                    }}
+                  >
+                    <DialogTrigger render={<Button size="sm" variant="primary" />}>
+                      Post update
+                    </DialogTrigger>
+                    <DialogContent className="sm:max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Post a status update</DialogTitle>
+                      </DialogHeader>
+                      <StatusForm
+                        key={aiDraft ? "ai" : "manual"}
+                        projectId={project.id}
+                        initialDraft={aiDraft}
+                        onCreated={() => {
+                          setDialogOpen(false);
+                          setAiDraft(undefined);
+                          fetchAll();
+                        }}
+                        onCancel={() => {
+                          setDialogOpen(false);
+                          setAiDraft(undefined);
+                        }}
+                      />
+                    </DialogContent>
+                  </Dialog>
                 </div>
-                <span className="text-sm">{m.user.name}</span>
-                <span className="text-[10px] text-muted-foreground uppercase">{m.role}</span>
               </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Personal project — no team members.</p>
-        )}
-      </section>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {latest && latestMeta ? (
+                <div
+                  className={cn(
+                    "rounded-lg border border-l-4 p-4",
+                    latestMeta.border,
+                    latestMeta.bg,
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <span className={cn("size-2 rounded-full shrink-0", latestMeta.dot)} />
+                    <span className="text-sm font-semibold text-gray-900">{latestMeta.label}</span>
+                    <span className="text-xs text-gray-400 ml-auto">
+                      {latest.author?.name} · {timeAgo(latest.createdAt)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed mb-3">
+                    {latest.summary}
+                  </p>
+                  {(() => {
+                    const hs = parseJsonArray(latest.highlights);
+                    const bs = parseJsonArray(latest.blockers);
+                    if (!hs.length && !bs.length) return null;
+                    return (
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-current/10">
+                        {hs.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-500 mb-1.5">
+                              Highlights
+                            </p>
+                            <ul className="text-sm space-y-1 text-gray-700">
+                              {hs.map((h, i) => (
+                                <li key={i} className="flex items-start gap-1.5">
+                                  <span className="text-green-500 mt-0.5 shrink-0">✓</span>
+                                  {h}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {bs.length > 0 && (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide font-semibold text-gray-500 mb-1.5">
+                              Blockers
+                            </p>
+                            <ul className="text-sm space-y-1 text-gray-700">
+                              {bs.map((b, i) => (
+                                <li key={i} className="flex items-start gap-1.5">
+                                  <span className="text-red-500 mt-0.5 shrink-0">⚠</span>
+                                  {b}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 py-2">No status updates yet.</p>
+              )}
+            </CardContent>
+          </Card>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Key milestones (next 30 days)</h2>
-        {milestones.length > 0 ? (
-          <ul className="space-y-2">
-            {milestones.map((m) => (
-              <li
-                key={m.id}
-                className="flex items-center gap-3 p-3 border rounded-lg"
-              >
-                <span className="h-2 w-2 rounded-full bg-primary" />
-                <a href={`/tasks/${m.id}`} className="text-sm font-medium hover:underline flex-1">
-                  {m.title}
-                </a>
-                {m.dueDate && (
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(m.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                  </span>
+          {/* Description */}
+          {project.description && (
+            <Card>
+              <CardHeader className="border-b border-gray-100 pb-3">
+                <CardTitle>Description</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                  {project.description}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Recent activity */}
+          <Card>
+            <CardHeader className="border-b border-gray-100 pb-3">
+              <CardTitle>Recent Activity</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-3">
+              {activity.length > 0 ? (
+                <ul className="divide-y divide-gray-50">
+                  {activity.map((a) => {
+                    const name = a.user?.name || "Someone";
+                    return (
+                      <li key={a.id} className="flex items-center gap-3 py-2.5">
+                        <div className="size-7 rounded-full bg-[#99ff33]/15 text-[#2d5200] flex items-center justify-center text-[11px] font-semibold shrink-0">
+                          {avatarInitial(name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-sm font-medium text-gray-900">{name}</span>{" "}
+                          <span className="text-sm text-gray-500">{a.action}</span>
+                          {a.field && (
+                            <span className="text-sm text-gray-400"> · {a.field}</span>
+                          )}
+                        </div>
+                        <span className="text-xs text-gray-400 shrink-0 tabular-nums">
+                          {timeAgo(a.createdAt)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-400 py-2">No recent activity.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Milestones */}
+          <Card>
+            <CardHeader className="border-b border-gray-100 pb-3">
+              <CardTitle>Milestones</CardTitle>
+              <p className="text-xs text-gray-400 mt-0.5">Next 30 days</p>
+            </CardHeader>
+            <CardContent className="pt-3">
+              {milestones.length > 0 ? (
+                <ul className="space-y-0 relative before:absolute before:left-[11px] before:top-3 before:bottom-3 before:w-px before:bg-gray-100">
+                  {milestones.map((m, idx) => {
+                    const isPast = m.dueDate && new Date(m.dueDate) < now;
+                    const isDone = m.status === "done";
+                    return (
+                      <li key={m.id} className="relative flex items-center gap-3 py-2.5 pl-7">
+                        {/* timeline dot */}
+                        <span
+                          className={cn(
+                            "absolute left-[6px] size-2.5 rounded-full border-2 border-white",
+                            isDone ? "bg-green-500" : isPast ? "bg-red-400" : "bg-[#99ff33]",
+                          )}
+                        />
+                        <a
+                          href={`/tasks/${m.id}`}
+                          className="text-sm font-medium text-gray-800 hover:text-[#2d5200] hover:underline flex-1 truncate transition-colors"
+                        >
+                          {m.title}
+                        </a>
+                        {m.dueDate && (
+                          <span
+                            className={cn(
+                              "text-xs shrink-0 tabular-nums",
+                              isPast && !isDone ? "text-red-500 font-medium" : "text-gray-400",
+                            )}
+                          >
+                            <Calendar className="size-3 inline mr-1" />
+                            {new Date(m.dueDate).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-400 py-2">No upcoming milestones.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ── Right column: Properties panel ───────────────────────────── */}
+        <div className="space-y-5">
+          {/* Linked clients */}
+          <ProjectClientsPanel projectId={project.id} />
+
+          <Card>
+            <CardHeader className="border-b border-gray-100 pb-3">
+              <CardTitle>Properties</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-2 pb-1">
+
+              {/* CLIENT */}
+              <PropRow label="Client" icon={Building2}>
+                {linkedClient ? (
+                  <a
+                    href={`/clients/${linkedClient.id}`}
+                    className="text-sm text-gray-800 hover:text-[#2d5200] hover:underline transition-colors"
+                  >
+                    {linkedClient.name}
+                  </a>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">—</span>
                 )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground">No upcoming milestones.</p>
-        )}
-      </section>
+              </PropRow>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Recent activity</h2>
-        {activity.length > 0 ? (
-          <ul className="space-y-1">
-            {activity.map((a) => (
-              <li key={a.id} className="text-sm text-muted-foreground flex items-center gap-2">
-                <span className="text-xs text-foreground">{a.user?.name || "Someone"}</span>
-                <span>{a.action}</span>
-                {a.field && <span className="text-xs">({a.field})</span>}
-                <span className="text-xs ml-auto">{timeAgo(a.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground">No recent activity.</p>
-        )}
-      </section>
+              {/* CATEGORY */}
+              <PropRow label="Category" icon={Tag}>
+                {project.category && !project.category.includes(" ") ? (
+                  <span className="text-sm text-gray-800 capitalize">
+                    {project.category.replace(/_/g, " ")}
+                  </span>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">—</span>
+                )}
+              </PropRow>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Linked goals</h2>
-        {linkedGoals.length > 0 ? (
-          <ul className="space-y-2">
-            {linkedGoals.map((g) => (
-              <li key={g.id} className="flex items-center gap-3 p-3 border rounded-lg">
-                <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <circle cx="12" cy="12" r="10" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-                  <circle cx="12" cy="12" r="6" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-                  <circle cx="12" cy="12" r="2" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
-                </svg>
-                <a href={`/goals`} className="text-sm font-medium hover:underline flex-1">{g.title}</a>
-                <span className="text-xs text-muted-foreground">{g.progress}%</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted-foreground">No goals linked to this project.</p>
-        )}
-      </section>
+              {/* STATUS */}
+              <PropRow label="Status" icon={TrendingUp}>
+                {latestMeta ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border",
+                      latestMeta.badge,
+                    )}
+                  >
+                    <span className={cn("size-1.5 rounded-full", latestMeta.dot)} />
+                    {latestMeta.label}
+                  </span>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">No updates</span>
+                )}
+              </PropRow>
+
+              {/* TEAM */}
+              <PropRow label="Team" icon={Users}>
+                {members.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {members.slice(0, 5).map((m) => (
+                      <div
+                        key={m.id}
+                        title={`${m.user.name} (${m.role})`}
+                        className="size-7 rounded-full bg-[#99ff33]/15 text-[#2d5200] flex items-center justify-center text-[11px] font-semibold border-2 border-white shadow-sm"
+                      >
+                        {avatarInitial(m.user.name)}
+                      </div>
+                    ))}
+                    {members.length > 5 && (
+                      <div className="size-7 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-[11px] font-semibold border-2 border-white shadow-sm">
+                        +{members.length - 5}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">Personal project</span>
+                )}
+              </PropRow>
+
+              {/* GOALS */}
+              <PropRow label="Goals" icon={Target}>
+                {linkedGoals.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {linkedGoals.map((g) => (
+                      <a
+                        key={g.id}
+                        href="/goals"
+                        className="flex items-center justify-between gap-2 group/goal hover:text-[#2d5200] transition-colors"
+                      >
+                        <span className="text-sm text-gray-800 group-hover/goal:text-[#2d5200] truncate">
+                          {g.title}
+                        </span>
+                        <span className="text-xs text-gray-400 shrink-0 tabular-nums">
+                          {g.progress}%
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">None linked</span>
+                )}
+              </PropRow>
+            </CardContent>
+          </Card>
+
+          {/* Members list (expanded) */}
+          {members.length > 0 && (
+            <Card>
+              <CardHeader className="border-b border-gray-100 pb-3">
+                <CardTitle>Team Members</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-2 pb-1">
+                <ul className="divide-y divide-gray-50">
+                  {members.map((m) => (
+                    <li key={m.id} className="flex items-center gap-2.5 py-2.5">
+                      <div className="size-7 rounded-full bg-[#99ff33]/15 text-[#2d5200] flex items-center justify-center text-[11px] font-semibold shrink-0">
+                        {avatarInitial(m.user.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{m.user.name}</p>
+                        <p className="text-xs text-gray-400">{m.user.email}</p>
+                      </div>
+                      <Badge variant="secondary" className="capitalize text-[10px] shrink-0">
+                        {m.role}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
