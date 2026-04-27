@@ -447,6 +447,16 @@ function GoalCard({ goal, onStatusChange, onDelete, onAddKR, onUpdateKR, onDelet
 
 // ── Page ─────────────────────────────────────────────────────────
 export default function GoalsPage() {
+  // useSearchParams must be inside a Suspense boundary for prerender —
+  // the inner component holds all hooks; the outer just provides Suspense.
+  return (
+    <Suspense fallback={null}>
+      <GoalsPageContent />
+    </Suspense>
+  );
+}
+
+function GoalsPageContent() {
   const confirm = useConfirm();
   const searchParams = useSearchParams();
   const [goals, setGoals] = useState<Goal[]>([]);
