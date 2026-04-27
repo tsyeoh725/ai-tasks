@@ -37,6 +37,8 @@ export const projects = sqliteTable("projects", {
   icon: text("icon"), // emoji like "\u{1F4C1}" or null
   teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }), // null = personal
   ownerId: text("owner_id").notNull().references(() => users.id),
+  clientId: text("client_id").references(() => clients.id, { onDelete: "set null" }),
+  category: text("category"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
@@ -677,6 +679,64 @@ export const globalSettings = sqliteTable("global_settings", {
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   key: text("key").notNull(),
   value: text("value").notNull(), // JSON-encoded
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// ============ CRM ============
+export const clients = sqliteTable("clients", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  logoUrl: text("logo_url"),
+  brief: text("brief"),
+  brandColor: text("brand_color").notNull().default("#99ff33"),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  whatsapp: text("whatsapp"),
+  website: text("website"),
+  industry: text("industry"),
+  billingAddress: text("billing_address"),
+  taxId: text("tax_id"),
+  currency: text("currency").notNull().default("MYR"),
+  status: text("status", { enum: ["active", "onboarding", "paused", "archived"] }).notNull().default("active"),
+  services: text("services").notNull().default("[]"),
+  customFields: text("custom_fields").notNull().default("{}"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const clientInvoices = sqliteTable("client_invoices", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  amount: real("amount").notNull().default(0),
+  status: text("status", { enum: ["draft", "sent", "paid", "overdue", "cancelled"] }).notNull().default("draft"),
+  dueDate: integer("due_date", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const projectClients = sqliteTable("project_clients", {
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+});
+
+export const leads = sqliteTable("leads", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  company: text("company"),
+  source: text("source", { enum: ["inbound", "outbound", "referral", "social", "website", "event", "import", "manual"] }).notNull().default("manual"),
+  status: text("status", { enum: ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost", "nurture"] }).notNull().default("new"),
+  estimatedValue: real("estimated_value"),
+  notes: text("notes"),
+  services: text("services").notNull().default("[]"),
+  tags: text("tags").notNull().default("[]"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 

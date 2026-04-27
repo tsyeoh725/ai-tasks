@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: self-hosted   # runs on the runner installed on talos
+
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+        env:
+          NODE_ENV: production
+          # NEXTAUTH_URL etc. come from .env.production on disk — Next.js reads it automatically
+
+      - name: Backup database
+        run: |
+          STAMP=$(date +%Y%m%d-%H%M%S)
+          cp /srv/ai-tasks/data/ai-tasks.db /srv/ai-tasks/data/ai-tasks.db.bak-$STAMP && \
+            echo "Backed up to ai-tasks.db.bak-$STAMP" || echo "No DB to back up yet"
+          # Keep only last 7 backups
+          ls -t /srv/ai-tasks/data/ai-tasks.db.bak-* 2>/dev/null | tail -n +8 | xargs rm -f || true
+
+      - name: Sync schema to database
+        run: npx drizzle-kit push
+        working-directory: /srv/ai-tasks
+        env:
+          NODE_ENV: production
+
+      - name: Copy build to app dir and restart
+        run: |
+          # Sync source + build output into the live app dir
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='data' \
+            --exclude='uploads' \
+            --exclude='.env.production' \
+            $GITHUB_WORKSPACE/ /srv/ai-tasks/
+          # Copy node_modules from workspace (already npm ci'd)
+          rsync -a --delete $GITHUB_WORKSPACE/node_modules/ /srv/ai-tasks/node_modules/
+          # Fix ownership
+          chown -R aitasks:aitasks /srv/ai-tasks
+          # Restart service
+          systemctl restart ai-tasks
+          sleep 4
+          systemctl is-active ai-tasks
+
+      - name: Smoke test
+        run: |
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/login)
+          echo "Login page HTTP $STATUS"
+          [ "$STATUS" = "200" ] || exit 1
