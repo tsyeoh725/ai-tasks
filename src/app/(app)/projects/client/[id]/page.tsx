@@ -342,7 +342,7 @@ function InvoicesTab({ clientId, currency, stats }: {
         </div>
       )}
 
-      {stats?.overdueBalance > 0 && (
+      {stats && stats.overdueBalance > 0 && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
           <AlertCircle size={14} className="text-red-600 dark:text-red-400 shrink-0" />
           <p className="text-sm text-red-700 dark:text-red-400 font-medium">
