@@ -126,8 +126,11 @@ if [ ! -d "$APP_DIR/.git" ]; then
   if [ ! -f "/home/$APP_USER/.ssh/id_ed25519" ]; then
     fail "no SSH deploy key at /home/$APP_USER/.ssh/id_ed25519 — generate one and add to GitHub deploy keys first"
   fi
+  # /srv is root-owned 755 so aitasks can't mkdir there. Create + chown
+  # as root first, then clone into the now-aitasks-owned empty dir.
   rm -rf "$APP_DIR"
-  mkdir -p "$(dirname "$APP_DIR")"
+  mkdir -p "$APP_DIR"
+  chown "$APP_USER:$APP_GROUP" "$APP_DIR"
   sudo -u "$APP_USER" GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new' \
     git clone --quiet "$REPO_URL" "$APP_DIR"
   ok "cloned $REPO_URL → $APP_DIR"
