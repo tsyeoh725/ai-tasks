@@ -92,7 +92,7 @@ if [ ! -f "$ENV_FILE" ]; then
 
   cat > "$ENV_FILE" <<EOF
 # ai-tasks — production environment
-# Edit values then run: sudo systemctl restart ai-tasks
+# Edit values then: sudo systemctl restart ai-tasks
 
 NEXTAUTH_URL=https://$DOMAIN
 NEXTAUTH_SECRET=$NEXTAUTH_SECRET
@@ -101,12 +101,12 @@ API_KEY_SALT=$API_KEY_SALT
 PORT=$PORT
 NODE_ENV=production
 
-# AI provider — fill these in
-OPENAI_API_KEY=
-AI_MODEL=gpt-4o-mini
+# AI provider
+OPENAI_API_KEY=${OPENAI_API_KEY:-}
+AI_MODEL=${AI_MODEL:-gpt-4o-mini}
 
 # Telegram (optional)
-TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 
 # Web push
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=$VAPID_PUBLIC
@@ -238,8 +238,8 @@ ok "nginx vhost: $DOMAIN"
 # ---------------------------------------------------------------- 10. first deploy
 if [ "$SKIP_FIRST_DEPLOY" = "1" ]; then
   warn "SKIP_FIRST_DEPLOY=1 — not running aitasks-update"
-elif [ "$ENV_GENERATED" = "1" ] && grep -q '^OPENAI_API_KEY=$' "$ENV_FILE"; then
-  warn "$ENV_FILE generated with empty OPENAI_API_KEY — fill it in then run: sudo aitasks-update"
+elif grep -q '^OPENAI_API_KEY=$' "$ENV_FILE"; then
+  warn "$ENV_FILE has empty OPENAI_API_KEY — fill it in (sudo -u aitasks nano $ENV_FILE) then run: sudo aitasks-update"
 else
   bold "Running first deploy (aitasks-update)"
   /usr/local/bin/aitasks-update
