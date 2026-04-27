@@ -122,6 +122,17 @@ EOF
   ok "generated $ENV_FILE"
 else
   ok "$ENV_FILE preserved"
+  # Backfill required keys for older env files (idempotent).
+  add_if_missing() {
+    local key="$1" val="$2"
+    if ! grep -qE "^$key=" "$ENV_FILE"; then
+      echo "$key=$val" >> "$ENV_FILE"
+      ok "added $key to $ENV_FILE"
+    fi
+  }
+  add_if_missing AUTH_TRUST_HOST "true"
+  add_if_missing DB_PATH         "$DATA_DIR/db/ai-tasks.db"
+  add_if_missing UPLOADS_DIR     "$DATA_DIR/uploads"
 fi
 
 # ---------------------------------------------------------------- 4. clone repo
