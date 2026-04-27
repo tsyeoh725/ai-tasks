@@ -22,6 +22,41 @@
       "when": 1776235709149,
       "tag": "0002_milky_lorna_dane",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1777055700004,
+      "tag": "0003_add_campaign",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1777141800000,
+      "tag": "0004_add_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1777180000000,
+      "tag": "0005_hierarchy_crm_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1777220000000,
+      "tag": "0006_add_client_whatsapp",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1777260000000,
+      "tag": "0007_add_task_fields",
+      "breakpoints": true
     }
   ]
 }
