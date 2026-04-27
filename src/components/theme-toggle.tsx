@@ -88,7 +88,7 @@ export function ThemeToggle({ compact = false }: { compact?: boolean }) {
 export const themeInitScript = `
 (function() {
   try {
-    var t = localStorage.getItem('theme') || 'light';
+    var t = localStorage.getItem('theme') || 'dark';
     var isDark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     if (isDark) document.documentElement.classList.add('dark');
   } catch (e) {}
