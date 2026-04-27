@@ -75,10 +75,10 @@ export default function HealthPage() {
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
           System Health
         </h1>
-        <p className="text-sm text-white/50 mt-1">
+        <p className="text-sm text-gray-500 mt-1">
           Check connectivity for Meta API, Claude, Telegram, and Database
         </p>
       </div>
@@ -114,7 +114,7 @@ export default function HealthPage() {
                   <div
                     className={
                       !status
-                        ? "h-10 w-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center"
+                        ? "h-10 w-10 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center"
                         : status.ok
                           ? "h-10 w-10 rounded-xl bg-emerald-500/10 border border-emerald-400/20 flex items-center justify-center"
                           : "h-10 w-10 rounded-xl bg-red-500/10 border border-red-400/20 flex items-center justify-center"
@@ -123,7 +123,7 @@ export default function HealthPage() {
                     <Icon
                       className={
                         !status
-                          ? "w-5 h-5 text-white/40"
+                          ? "w-5 h-5 text-gray-400"
                           : status.ok
                             ? "w-5 h-5 text-emerald-300"
                             : "w-5 h-5 text-red-300"
@@ -160,7 +160,7 @@ export default function HealthPage() {
                         </Badge>
                       )}
                     </div>
-                    <p className="text-xs text-white/50 mt-0.5">
+                    <p className="text-xs text-gray-500 mt-0.5">
                       {svc.description}
                     </p>
                     {status && (
@@ -183,7 +183,7 @@ export default function HealthPage() {
       </div>
 
       {results && (
-        <div className="pt-3 border-t border-white/[0.06]">
+        <div className="pt-3 border-t border-gray-200">
           {Object.values(results).every((r) => r.ok) ? (
             <p className="text-sm text-emerald-300">
               All systems operational.

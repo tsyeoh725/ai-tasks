@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { taskComments, tasks } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { canAccessProject } from "@/lib/access";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { logActivity } from "@/lib/activity";
@@ -13,6 +14,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!user) return unauthorized();
 
   const { id } = await params;
+
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, id), columns: { projectId: true } });
+  if (!task) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+
+  if (!(await canAccessProject(task.projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const comments = await db.query.taskComments.findMany({
     where: and(eq(taskComments.taskId, id), eq(taskComments.isAi, false)),
@@ -38,6 +46,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, id) });
   if (!task) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (!(await canAccessProject(task.projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const comment = {

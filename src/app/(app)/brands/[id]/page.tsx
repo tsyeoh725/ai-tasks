@@ -198,12 +198,12 @@ export default function BrandDetailPage({
   if (!brand || !config) {
     return (
       <div className="max-w-5xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6 animate-fade-in">
-        <div className="h-8 w-64 bg-white/[0.05] animate-pulse rounded" />
+        <div className="h-8 w-64 bg-gray-100 animate-pulse rounded" />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="h-24 rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse"
+              className="h-24 rounded-2xl bg-gray-50 border border-gray-200 animate-pulse"
             />
           ))}
         </div>
@@ -225,7 +225,7 @@ export default function BrandDetailPage({
           </Link>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+              <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
                 {brand.name}
               </h1>
               <Badge variant={brand.is_active ? "success" : "secondary"}>
@@ -233,13 +233,13 @@ export default function BrandDetailPage({
               </Badge>
             </div>
             <div className="flex items-center gap-3 mt-1">
-              <span className="text-xs text-white/50 font-mono">
+              <span className="text-xs text-gray-500 font-mono">
                 {brand.meta_account_id}
               </span>
               {brand.project_id && (
                 <Link
                   href={`/projects/${brand.project_id}`}
-                  className="inline-flex items-center gap-1 text-xs text-indigo-300 hover:text-indigo-200 bg-indigo-400/10 border border-indigo-400/20 rounded-full px-2 py-0.5 transition-colors"
+                  className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5 transition-colors"
                 >
                   <ExternalLink className="w-3 h-3" />
                   Linked project
@@ -278,7 +278,7 @@ export default function BrandDetailPage({
               ? "text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-400/20 rounded-lg px-3 py-2"
               : status.kind === "error"
                 ? "text-xs text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-2"
-                : "text-xs text-indigo-300 bg-indigo-500/10 border border-indigo-400/20 rounded-lg px-3 py-2"
+                : "text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2"
           }
         >
           {status.message}
@@ -289,7 +289,7 @@ export default function BrandDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Thresholds</CardTitle>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-gray-500">
             Performance boundaries. Leave empty to skip that metric.
           </p>
         </CardHeader>
@@ -360,7 +360,7 @@ export default function BrandDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Automation Toggles</CardTitle>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-gray-500">
             Control which actions the system can take automatically
           </p>
         </CardHeader>
@@ -368,7 +368,7 @@ export default function BrandDetailPage({
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label>Kill / Pause Ads</Label>
-              <p className="text-xs text-white/50 mt-0.5">
+              <p className="text-xs text-gray-500 mt-0.5">
                 Automatically pause or kill underperforming ads
               </p>
             </div>
@@ -386,7 +386,7 @@ export default function BrandDetailPage({
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label>Budget Reallocation</Label>
-              <p className="text-xs text-white/50 mt-0.5">
+              <p className="text-xs text-gray-500 mt-0.5">
                 Shift budget from losers to winners
               </p>
             </div>
@@ -404,7 +404,7 @@ export default function BrandDetailPage({
           <div className="flex items-center justify-between gap-4">
             <div>
               <Label>Duplicate Winners</Label>
-              <p className="text-xs text-white/50 mt-0.5">
+              <p className="text-xs text-gray-500 mt-0.5">
                 Copy top-performing ads to new ad sets
               </p>
             </div>
@@ -425,7 +425,7 @@ export default function BrandDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Spend Limits</CardTitle>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-gray-500">
             Set maximum spend limits. When limits are reached, the system can
             alert you or auto-pause.
           </p>
@@ -473,10 +473,10 @@ export default function BrandDetailPage({
               className="mt-1.5 font-mono"
             />
           </div>
-          <div className="flex items-center justify-between gap-4 pt-2 border-t border-white/[0.06]">
+          <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-200">
             <div>
               <Label>Auto-Pause on Limit</Label>
-              <p className="text-xs text-white/50 mt-0.5">
+              <p className="text-xs text-gray-500 mt-0.5">
                 Pause all campaigns when monthly limit is reached
               </p>
             </div>
@@ -497,7 +497,7 @@ export default function BrandDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Preferences</CardTitle>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-gray-500">
             Free-form notes for the AI to consider when making decisions
           </p>
         </CardHeader>
@@ -507,7 +507,7 @@ export default function BrandDetailPage({
               {config.preferences.map((pref, i) => (
                 <div
                   key={i}
-                  className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.04] border border-white/[0.06] text-sm"
+                  className="flex items-start gap-2 p-2 rounded-lg bg-gray-50 border border-gray-200 text-sm"
                 >
                   <span className="flex-1">{pref}</span>
                   <Button
@@ -540,7 +540,7 @@ export default function BrandDetailPage({
       <Card>
         <CardHeader>
           <CardTitle>Actions</CardTitle>
-          <p className="text-xs text-white/50">
+          <p className="text-xs text-gray-500">
             Manual data operations for this brand
           </p>
         </CardHeader>

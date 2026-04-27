@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { tasks, taskComments, projectBriefs, documents } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { canAccessProject } from "@/lib/access";
 import { streamAiResponse } from "@/lib/ai";
 import { v4 as uuid } from "uuid";
 
@@ -31,6 +32,13 @@ export async function POST(req: Request) {
   if (!task) {
     return new Response(JSON.stringify({ error: "Task not found" }), {
       status: 404,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  if (!(await canAccessProject(task.projectId, user.id!))) {
+    return new Response(JSON.stringify({ error: "Forbidden" }), {
+      status: 403,
       headers: { "Content-Type": "application/json" },
     });
   }

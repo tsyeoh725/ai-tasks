@@ -119,12 +119,12 @@ export function PushToggle() {
   if (status === "loading") return null;
   if (status === "unsupported") {
     return (
-      <span className="text-xs text-white/40">Push not supported</span>
+      <span className="text-xs text-gray-400">Push not supported</span>
     );
   }
   if (status === "denied") {
     return (
-      <span className="text-xs text-white/40" title="Enable notifications in browser settings">
+      <span className="text-xs text-gray-400" title="Enable notifications in browser settings">
         Notifications blocked
       </span>
     );
@@ -140,7 +140,7 @@ export function PushToggle() {
         "inline-flex items-center gap-1.5 text-xs font-medium rounded-md px-2 py-1 transition-colors",
         subscribed
           ? "text-emerald-300 hover:text-emerald-200 hover:bg-emerald-500/10"
-          : "text-white/60 hover:text-white hover:bg-white/[0.06]",
+          : "text-gray-500 hover:text-gray-800 hover:bg-gray-100",
         busy && "opacity-60 cursor-wait",
       )}
       title={subscribed ? "Disable push notifications" : "Enable push notifications"}

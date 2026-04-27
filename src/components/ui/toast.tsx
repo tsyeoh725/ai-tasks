@@ -75,34 +75,34 @@ function ToastItem({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
       : Info;
   const iconColor =
     toast.variant === "success"
-      ? "text-emerald-400"
+      ? "text-emerald-500"
       : toast.variant === "error"
-      ? "text-red-400"
+      ? "text-red-500"
       : toast.variant === "info"
-      ? "text-cyan-400"
-      : "text-white/70";
+      ? "text-blue-500"
+      : "text-gray-400";
 
   return (
     <div
       className={cn(
-        "pointer-events-auto min-w-[280px] max-w-[380px] rounded-2xl border px-4 py-3 backdrop-blur-xl shadow-[0_10px_40px_rgb(0_0_0/0.4),inset_0_1px_0_rgb(255_255_255/0.08)]",
-        "bg-[rgb(15_15_25/0.85)] border-white/[0.12]",
-        "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:slide-in-from-right-4"
+        "pointer-events-auto min-w-[280px] max-w-[380px] rounded-xl border px-4 py-3 shadow-lg",
+        "bg-white border-gray-200",
+        "animate-in fade-in-0 slide-in-from-right-4 duration-200"
       )}
     >
       <div className="flex items-start gap-2.5">
         <Icon className={cn("h-4 w-4 mt-0.5 shrink-0", iconColor)} />
         <div className="flex-1 min-w-0">
           {toast.title && (
-            <div className="text-sm font-medium text-foreground">{toast.title}</div>
+            <div className="text-sm font-medium text-gray-900">{toast.title}</div>
           )}
           {toast.description && (
-            <div className="text-xs text-white/60 mt-0.5">{toast.description}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{toast.description}</div>
           )}
         </div>
         <button
           onClick={onDismiss}
-          className="text-white/40 hover:text-white/80 transition-colors"
+          className="text-gray-400 hover:text-gray-600 transition-colors"
         >
           <X className="h-3.5 w-3.5" />
         </button>

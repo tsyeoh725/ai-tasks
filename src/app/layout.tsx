@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Poppins, JetBrains_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
+import { themeInitScript } from "@/components/theme-toggle";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-inter",
+const poppins = Poppins({
+  variable: "--font-poppins",
   subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700"],
   display: "swap",
 });
 
@@ -29,9 +31,13 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`dark ${inter.variable} ${jetbrainsMono.variable}`}
+      className={`${poppins.variable} ${jetbrainsMono.variable}`}
     >
-      <body className="min-h-screen font-sans antialiased text-[rgb(244_244_245)]">
+      <head>
+        {/* Set theme before paint to prevent flash */}
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body suppressHydrationWarning className="min-h-screen font-sans antialiased text-slate-800 dark:text-slate-200">
         <Providers>{children}</Providers>
       </body>
     </html>

@@ -104,10 +104,10 @@ export default function BrandsPage() {
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
             Brands
           </h1>
-          <p className="text-sm text-white/50 mt-1">
+          <p className="text-sm text-gray-500 mt-1">
             Manage your Meta ad accounts and automation rules
           </p>
         </div>
@@ -143,7 +143,7 @@ export default function BrandsPage() {
                   placeholder="e.g., 123456789"
                   className="mt-1.5 font-mono"
                 />
-                <p className="text-xs text-white/40 mt-1.5">
+                <p className="text-xs text-gray-400 mt-1.5">
                   Found in Meta Business Manager &rarr; Ad Accounts
                 </p>
               </div>
@@ -170,16 +170,16 @@ export default function BrandsPage() {
           {[1, 2, 3].map((i) => (
             <div
               key={i}
-              className="h-36 rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse"
+              className="h-36 rounded-2xl bg-gray-50 border border-gray-200 animate-pulse"
             />
           ))}
         </div>
       ) : brands.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <Building2 className="w-12 h-12 text-white/20 mb-3" />
-            <p className="text-white/60">No brands yet</p>
-            <p className="text-xs text-white/40 mt-1">
+            <Building2 className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="text-gray-500">No brands yet</p>
+            <p className="text-xs text-gray-400 mt-1">
               Click &ldquo;Add Brand&rdquo; to get started
             </p>
           </CardContent>
@@ -188,7 +188,7 @@ export default function BrandsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {brands.map((brand) => (
             <Link key={brand.id} href={`/brands/${brand.id}`} className="block">
-              <Card className="h-full hover:bg-white/[0.06] hover:border-white/[0.14] transition-colors cursor-pointer">
+              <Card className="h-full hover:bg-gray-50 transition-colors cursor-pointer">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2">
                     <CardTitle className="truncate">{brand.name}</CardTitle>
@@ -198,11 +198,11 @@ export default function BrandsPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-xs text-white/50 font-mono truncate">
+                  <p className="text-xs text-gray-500 font-mono truncate">
                     {brand.meta_account_id}
                   </p>
                   {brand.config?.spend_limit?.monthly_limit && (
-                    <p className="text-xs text-white/50 mt-1 font-mono">
+                    <p className="text-xs text-gray-500 mt-1 font-mono">
                       RM {brand.config.spend_limit.monthly_limit.toLocaleString()}/mo
                     </p>
                   )}

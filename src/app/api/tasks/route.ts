@@ -1,13 +1,18 @@
 import { db } from "@/db";
-import { tasks } from "@/db/schema";
-import { eq, and, inArray, desc } from "drizzle-orm";
+import { tasks, projects } from "@/db/schema";
+import { eq, and, inArray, desc, asc, count } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { canAccessProject } from "@/lib/access";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { logActivity } from "@/lib/activity";
 import { notifyTaskAssigned } from "@/lib/notifications";
 import { autoSyncSchedule } from "@/lib/time-blocker";
 import { getAccessibleProjectIds } from "@/lib/queries/projects";
+import { parsePagination } from "@/lib/api";
+
+const ALLOWED_STATUS = ["todo", "in_progress", "done", "blocked"] as const;
+const ALLOWED_PRIORITY = ["low", "medium", "high", "urgent"] as const;
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -15,18 +20,36 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const projectId = searchParams.get("projectId");
+  const clientId = searchParams.get("clientId");
   const status = searchParams.get("status");
   const assignedToMe = searchParams.get("assignedToMe");
+  const sort = searchParams.get("sort") ?? "createdAt";
+  const { page, limit, offset } = parsePagination(searchParams);
 
-  // Build conditions
   const conditions = [];
 
   if (projectId) {
     conditions.push(eq(tasks.projectId, projectId));
+    if (clientId) conditions.push(eq(tasks.clientId, clientId));
+  } else if (clientId) {
+    // tasks tagged to this client (direct) OR via projects with this client
+    const projs = await db.query.projects.findMany({
+      where: eq(projects.clientId, clientId),
+      columns: { id: true },
+    });
+    const projectIds = projs.map((p) => p.id);
+    if (projectIds.length === 0) {
+      conditions.push(eq(tasks.clientId, clientId));
+    } else {
+      // clientId match OR any task in a project owned by this client
+      // drizzle: build OR
+      const { or: orFn } = await import("drizzle-orm");
+      conditions.push(orFn(eq(tasks.clientId, clientId), inArray(tasks.projectId, projectIds))!);
+    }
   } else {
     const projectIds = await getAccessibleProjectIds(user.id);
     if (projectIds.length === 0) {
-      return NextResponse.json({ tasks: [] });
+      return NextResponse.json({ tasks: [], total: 0, page, limit, hasMore: false });
     }
     conditions.push(inArray(tasks.projectId, projectIds));
   }
@@ -39,27 +62,56 @@ export async function GET(req: Request) {
     conditions.push(eq(tasks.assigneeId, user.id));
   }
 
-  const result = await db.query.tasks.findMany({
-    where: conditions.length > 0 ? and(...conditions) : undefined,
-    with: {
-      project: { columns: { name: true, color: true } },
-      assignee: { columns: { name: true, email: true } },
-      subtasks: true,
-    },
-    orderBy: [desc(tasks.createdAt)],
-  });
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  return NextResponse.json({ tasks: result });
+  const orderBy = sort === "dueDate"
+    ? [asc(tasks.dueDate), desc(tasks.createdAt)]
+    : sort === "priority"
+    ? [desc(tasks.priority), desc(tasks.createdAt)]
+    : [desc(tasks.createdAt)];
+
+  const [result, [{ total }]] = await Promise.all([
+    db.query.tasks.findMany({
+      where,
+      with: {
+        project: { columns: { name: true, color: true } },
+        client: { columns: { id: true, name: true, logoUrl: true, brandColor: true } },
+        assignee: { columns: { name: true, email: true } },
+        subtasks: true,
+      },
+      orderBy,
+      limit,
+      offset,
+    }),
+    db.select({ total: count() }).from(tasks).where(where),
+  ]);
+
+  return NextResponse.json({ tasks: result, total, page, limit, hasMore: page * limit < total });
 }
 
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  const { title, description, status, priority, projectId, sectionId, assigneeId, dueDate, taskType } = await req.json();
+  let body: Record<string, any>;
+  try { body = await req.json(); }
+  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
+
+  const { title, description, status, priority, projectId, clientId, sectionId, assigneeId, dueDate, taskType } = body;
 
   if (!title || !projectId) {
     return NextResponse.json({ error: "Title and projectId are required" }, { status: 400 });
+  }
+
+  if (!(await canAccessProject(projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  if (status && !ALLOWED_STATUS.includes(status as never)) {
+    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+  }
+  if (priority && !ALLOWED_PRIORITY.includes(priority as never)) {
+    return NextResponse.json({ error: "Invalid priority" }, { status: 400 });
   }
 
   const id = uuid();
@@ -72,6 +124,7 @@ export async function POST(req: Request) {
     status: status || "todo",
     priority: priority || "medium",
     projectId,
+    clientId: clientId || null,
     sectionId: sectionId || null,
     assigneeId: assigneeId || null,
     createdById: user.id,
@@ -80,6 +133,22 @@ export async function POST(req: Request) {
     createdAt: now,
     updatedAt: now,
   });
+
+  // Auto-link client to project if not already linked
+  if (clientId) {
+    const { projectClients } = await import("@/db/schema");
+    const existing = await db.query.projectClients.findFirst({
+      where: (pc, { and, eq }) => and(eq(pc.projectId, projectId), eq(pc.clientId, clientId)),
+    });
+    if (!existing) {
+      await db.insert(projectClients).values({
+        id: uuid(),
+        projectId,
+        clientId,
+        createdAt: now,
+      });
+    }
+  }
 
   const task = await db.query.tasks.findFirst({
     where: eq(tasks.id, id),

@@ -106,10 +106,10 @@ export default function JournalPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-5 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+        <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
           Decision Journal
         </h1>
-        <p className="text-sm text-white/50 mt-1">
+        <p className="text-sm text-gray-500 mt-1">
           Complete history of all recommendations and actions
         </p>
       </div>
@@ -118,7 +118,7 @@ export default function JournalPage() {
       <Card>
         <CardContent className="py-3 flex flex-wrap gap-3 items-end">
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
               Verdict
             </div>
             <Select
@@ -138,7 +138,7 @@ export default function JournalPage() {
           </div>
 
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
               Action
             </div>
             <Select
@@ -159,7 +159,7 @@ export default function JournalPage() {
           </div>
 
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
               Brand
             </div>
             <Select
@@ -185,7 +185,7 @@ export default function JournalPage() {
           </div>
 
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
               From
             </div>
             <Input
@@ -196,7 +196,7 @@ export default function JournalPage() {
             />
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+            <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
               To
             </div>
             <Input
@@ -215,15 +215,15 @@ export default function JournalPage() {
           {[1, 2, 3, 4].map((i) => (
             <div
               key={i}
-              className="h-14 rounded-xl bg-white/[0.03] border border-white/[0.06] animate-pulse"
+              className="h-14 rounded-xl bg-gray-100 border border-gray-200 animate-pulse"
             />
           ))}
         </div>
       ) : entries.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <BookOpen className="w-12 h-12 text-white/20 mb-3" />
-            <p className="text-white/60">No journal entries</p>
+            <BookOpen className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="text-gray-500">No journal entries</p>
           </CardContent>
         </Card>
       ) : (
@@ -231,7 +231,7 @@ export default function JournalPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.06] text-[11px] text-white/40 uppercase tracking-wider">
+                <tr className="border-b border-gray-200 text-[11px] text-gray-400 uppercase tracking-wider">
                   <th className="text-left font-medium px-3 py-2 w-8"></th>
                   <th className="text-left font-medium px-3 py-2 w-32">
                     Timestamp
@@ -255,24 +255,24 @@ export default function JournalPage() {
                         onClick={() =>
                           setExpandedId(isExpanded ? null : entry.id)
                         }
-                        className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors cursor-pointer"
+                        className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
                       >
                         <td className="px-3 py-2.5">
                           {isExpanded ? (
-                            <ChevronDown className="w-3 h-3 text-white/40" />
+                            <ChevronDown className="w-3 h-3 text-gray-400" />
                           ) : (
-                            <ChevronRight className="w-3 h-3 text-white/40" />
+                            <ChevronRight className="w-3 h-3 text-gray-400" />
                           )}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-[11px] text-white/60">
+                        <td className="px-3 py-2.5 font-mono text-[11px] text-gray-500">
                           {formatDistanceToNow(new Date(entry.created_at), {
                             addSuffix: true,
                           })}
                         </td>
-                        <td className="px-3 py-2.5 text-white/70">
+                        <td className="px-3 py-2.5 text-gray-600">
                           {entry.brand_name || "—"}
                         </td>
-                        <td className="px-3 py-2.5 truncate max-w-[240px] text-white/90">
+                        <td className="px-3 py-2.5 truncate max-w-[240px] text-gray-800">
                           {entry.ad_name || entry.reason.slice(0, 50)}
                         </td>
                         <td className="px-3 py-2.5">
@@ -285,14 +285,14 @@ export default function JournalPage() {
                             {entry.guard_verdict}
                           </Badge>
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-white/80">
+                        <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-700">
                           {entry.confidence !== null ? `${confidencePct}%` : "—"}
                         </td>
                         <td className="px-3 py-2.5">
                           {entry.action_taken ? (
                             <Badge variant="success">Executed</Badge>
                           ) : (
-                            <span className="text-xs text-white/40">—</span>
+                            <span className="text-xs text-gray-400">—</span>
                           )}
                         </td>
                       </tr>
@@ -300,21 +300,21 @@ export default function JournalPage() {
                         <tr>
                           <td
                             colSpan={8}
-                            className="px-3 py-3 bg-white/[0.02] border-b border-white/[0.04]"
+                            className="px-3 py-3 bg-gray-50 border-b border-gray-100"
                           >
                             <div className="space-y-3 text-xs">
                               <div>
-                                <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+                                <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                   Reason
                                 </div>
-                                <p className="text-white/80">{entry.reason}</p>
+                                <p className="text-gray-700">{entry.reason}</p>
                               </div>
                               {entry.guard_reasoning && (
                                 <div>
-                                  <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                     AI Guard Analysis
                                   </div>
-                                  <p className="text-white/80 whitespace-pre-wrap">
+                                  <p className="text-gray-700 whitespace-pre-wrap">
                                     {entry.guard_reasoning}
                                   </p>
                                 </div>
@@ -322,17 +322,17 @@ export default function JournalPage() {
                               {entry.confidence !== null && (
                                 <div className="flex gap-6">
                                   <div>
-                                    <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+                                    <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                       Confidence
                                     </div>
-                                    <p className="font-mono">{confidencePct}%</p>
+                                    <p className="font-mono text-gray-800">{confidencePct}%</p>
                                   </div>
                                   {entry.risk_level && (
                                     <div>
-                                      <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+                                      <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                         Risk
                                       </div>
-                                      <p className="uppercase">
+                                      <p className="uppercase text-gray-800">
                                         {entry.risk_level}
                                       </p>
                                     </div>
@@ -341,10 +341,10 @@ export default function JournalPage() {
                               )}
                               {entry.action_result && (
                                 <div>
-                                  <div className="text-[10px] uppercase tracking-wider text-white/40 mb-1">
+                                  <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                     Action Result
                                   </div>
-                                  <pre className="text-[11px] font-mono bg-white/[0.03] border border-white/[0.06] rounded-lg p-2 overflow-x-auto">
+                                  <pre className="text-[11px] font-mono bg-gray-100 border border-gray-200 rounded-lg p-2 overflow-x-auto text-gray-700">
                                     {JSON.stringify(entry.action_result, null, 2)}
                                   </pre>
                                 </div>

@@ -287,10 +287,10 @@ export default function AdsPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
             Ad Audit
           </h1>
-          <p className="text-sm text-white/50 mt-1">
+          <p className="text-sm text-gray-500 mt-1">
             Monitor and act on live ad performance
           </p>
         </div>
@@ -317,7 +317,7 @@ export default function AdsPage() {
       </div>
 
       {status && (
-        <div className="text-xs text-indigo-300 bg-indigo-500/10 border border-indigo-400/20 rounded-lg px-3 py-2">
+        <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
           {status}
         </div>
       )}
@@ -325,14 +325,14 @@ export default function AdsPage() {
       {/* Date range controls */}
       <Card>
         <CardContent className="py-3 flex items-center gap-2 flex-wrap">
-          <CalendarIcon className="w-4 h-4 text-white/50 shrink-0" />
+          <CalendarIcon className="w-4 h-4 text-gray-400 shrink-0" />
           <Input
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             className="w-40 font-mono text-xs"
           />
-          <span className="text-xs text-white/40">to</span>
+          <span className="text-xs text-gray-400">to</span>
           <Input
             type="date"
             value={dateTo}
@@ -357,7 +357,7 @@ export default function AdsPage() {
       {/* Filters / sort / group */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-white/40 uppercase tracking-wider">
+          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
             Health
           </span>
           <Select
@@ -383,7 +383,7 @@ export default function AdsPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-white/40 uppercase tracking-wider">
+          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
             Sort
           </span>
           <Select
@@ -404,7 +404,7 @@ export default function AdsPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-white/40 uppercase tracking-wider">
+          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
             Group
           </span>
           <Select
@@ -425,7 +425,7 @@ export default function AdsPage() {
           </Select>
         </div>
 
-        <span className="text-[11px] text-white/40 ml-auto font-mono">
+        <span className="text-[11px] text-gray-400 ml-auto font-mono">
           {sortedAds.length} of {ads.length} ads
         </span>
       </div>
@@ -433,13 +433,13 @@ export default function AdsPage() {
       {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-white/40" />
+          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
         </div>
       ) : ads.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <Megaphone className="w-12 h-12 text-white/20 mb-3" />
-            <p className="text-white/60">No data for this date range</p>
+            <Megaphone className="w-12 h-12 text-gray-300 mb-3" />
+            <p className="text-gray-500">No data for this date range</p>
           </CardContent>
         </Card>
       ) : (
@@ -449,15 +449,15 @@ export default function AdsPage() {
             return (
               <div key={k} className="space-y-2">
                 {groupKey !== "none" && (
-                  <h2 className="text-[11px] uppercase tracking-wider text-white/50 font-medium">
-                    {k} <span className="text-white/30">({rows.length})</span>
+                  <h2 className="text-[11px] uppercase tracking-wider text-gray-500 font-medium">
+                    {k} <span className="text-gray-400">({rows.length})</span>
                   </h2>
                 )}
                 <Card>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-white/[0.06] text-[11px] text-white/40 uppercase tracking-wider">
+                        <tr className="border-b border-gray-200 text-[11px] text-gray-400 uppercase tracking-wider">
                           <th className="text-left font-medium px-4 py-2">Ad</th>
                           <th className="text-left font-medium px-3 py-2">
                             Status
@@ -507,7 +507,7 @@ export default function AdsPage() {
                           return (
                             <tr
                               key={ad.id}
-                              className="border-b border-white/[0.04] hover:bg-white/[0.03] transition-colors"
+                              className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
                             >
                               <td className="px-4 py-2.5">
                                 <div
@@ -516,7 +516,7 @@ export default function AdsPage() {
                                 >
                                   {ad.name}
                                 </div>
-                                <div className="text-[11px] text-white/40 truncate max-w-[240px]">
+                                <div className="text-[11px] text-gray-400 truncate max-w-[240px]">
                                   {ad.brand_name && (
                                     <span>{ad.brand_name} &middot; </span>
                                   )}
@@ -542,7 +542,7 @@ export default function AdsPage() {
                               <td
                                 className={cn(
                                   "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  cplW ? "text-red-300" : "text-white/90",
+                                  cplW ? "text-red-600" : "text-gray-800",
                                 )}
                                 title={cl}
                               >
@@ -553,7 +553,7 @@ export default function AdsPage() {
                               <td
                                 className={cn(
                                   "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  ctrW ? "text-red-300" : "text-white/90",
+                                  ctrW ? "text-red-600" : "text-gray-800",
                                 )}
                               >
                                 {ad.ctr !== null
@@ -563,17 +563,17 @@ export default function AdsPage() {
                               <td
                                 className={cn(
                                   "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  freqW ? "text-red-300" : "text-white/90",
+                                  freqW ? "text-red-600" : "text-gray-800",
                                 )}
                               >
                                 {ad.frequency !== null
                                   ? ad.frequency.toFixed(1)
                                   : "—"}
                               </td>
-                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-white/90">
+                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-gray-800">
                                 RM{ad.spend.toFixed(0)}
                               </td>
-                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-white/90">
+                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-gray-800">
                                 {ad.leads}
                               </td>
                               <td className="text-right px-3 py-2.5">

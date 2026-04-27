@@ -1,120 +1,222 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect, useCallback } from "react";
+import {
+  Paperclip,
+  Upload,
+  Download,
+  Trash2,
+  FileText,
+  FileSpreadsheet,
+  FileVideo,
+  Image as ImageIcon,
+  File as FileIcon,
+  Loader2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 
 type Attachment = {
   id: string;
+  taskId: string;
+  userId: string;
   fileName: string;
   fileType: string;
+  filePath: string;
   fileSize: number;
   createdAt: string;
-  user?: { name: string };
+  user?: { id: string; name: string };
 };
 
-export function TaskAttachments({ taskId }: { taskId: string }) {
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-  useEffect(() => {
-    fetchAttachments();
+function FileIconFor({ name, type }: { name: string; type: string }) {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (type.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext))
+    return <ImageIcon size={18} className="text-purple-500 shrink-0" />;
+  if (type.startsWith("video/") || ["mp4", "mov", "avi", "webm"].includes(ext))
+    return <FileVideo size={18} className="text-pink-500 shrink-0" />;
+  if (type.includes("pdf") || ext === "pdf")
+    return <FileText size={18} className="text-red-600 shrink-0" />;
+  if (["xls", "xlsx", "csv"].includes(ext))
+    return <FileSpreadsheet size={18} className="text-green-600 shrink-0" />;
+  if (["doc", "docx"].includes(ext))
+    return <FileText size={18} className="text-blue-600 shrink-0" />;
+  return <FileIcon size={18} className="text-gray-500 shrink-0" />;
+}
+
+export function TaskAttachments({ taskId }: { taskId: string }) {
+  const confirm = useConfirm();
+  const { success: toastSuccess, error: toastError } = useToast();
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  const fetchAttachments = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/attachments`);
+      if (res.ok) {
+        const data = await res.json();
+        setAttachments(data.attachments || []);
+      }
+    } catch {
+      // ignore
+    }
+    setLoading(false);
   }, [taskId]);
 
-  async function fetchAttachments() {
-    const res = await fetch(`/api/tasks/${taskId}/attachments`);
-    const data = await res.json();
-    setAttachments(data.attachments || []);
-  }
+  useEffect(() => { fetchAttachments(); }, [fetchAttachments]);
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  async function uploadFile(file: File) {
     setUploading(true);
     const formData = new FormData();
     formData.append("file", file);
-
-    await fetch(`/api/tasks/${taskId}/attachments`, {
-      method: "POST",
-      body: formData,
-    });
-
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/attachments`, {
+        method: "POST",
+        body: formData,
+      });
+      if (res.ok) {
+        fetchAttachments();
+        toastSuccess({ title: "File attached", description: file.name });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toastError({ title: "Upload failed", description: err.error });
+      }
+    } catch {
+      toastError({ title: "Upload failed" });
+    }
     setUploading(false);
-    if (fileRef.current) fileRef.current.value = "";
-    fetchAttachments();
   }
 
-  async function handleDelete(attachmentId: string) {
+  async function uploadFiles(files: FileList | File[]) {
+    for (const f of Array.from(files)) await uploadFile(f);
+  }
+
+  async function deleteAttachment(id: string, name: string) {
+    const ok = await confirm({
+      title: "Remove attachment?",
+      description: `"${name}" will be permanently removed.`,
+      confirmLabel: "Delete",
+      variant: "destructive",
+    });
+    if (!ok) return;
     await fetch(`/api/tasks/${taskId}/attachments`, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ attachmentId }),
+      body: JSON.stringify({ attachmentId: id }),
     });
     fetchAttachments();
   }
 
-  function formatSize(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  const fileIcons: Record<string, string> = {
-    pdf: "\u{1F4C4}",
-    doc: "\u{1F4DD}",
-    docx: "\u{1F4DD}",
-    png: "\u{1F5BC}\u{FE0F}",
-    jpg: "\u{1F5BC}\u{FE0F}",
-    jpeg: "\u{1F5BC}\u{FE0F}",
-    gif: "\u{1F5BC}\u{FE0F}",
-    zip: "\u{1F4E6}",
-  };
-
   return (
     <div className="space-y-2">
-      {attachments.map((att) => {
-        const ext = att.fileName.split(".").pop()?.toLowerCase() || "";
-        return (
-          <div key={att.id} className="flex items-center gap-2 text-sm group border rounded-md px-3 py-2">
-            <span className="text-base">{fileIcons[ext] || "\u{1F4CE}"}</span>
-            <div className="flex-1 min-w-0">
-              <p className="truncate font-medium">{att.fileName}</p>
-              <p className="text-xs text-muted-foreground">
-                {formatSize(att.fileSize)} &middot; {att.user?.name || "Unknown"}
-              </p>
-            </div>
-            <button
-              onClick={() => handleDelete(att.id)}
-              className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-1"
-              type="button"
-            >
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-            </button>
-          </div>
-        );
-      })}
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Paperclip size={13} className="text-gray-500" />
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+          Attachments
+          {attachments.length > 0 && (
+            <span className="ml-1.5 text-gray-400 font-normal">({attachments.length})</span>
+          )}
+        </h3>
+        <label className="ml-auto flex items-center gap-1 h-6 px-2 rounded-md text-[11px] font-medium border border-gray-200 bg-white hover:bg-gray-50 cursor-pointer transition-colors">
+          {uploading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+          {uploading ? "Uploading…" : "Upload"}
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => { if (e.target.files) uploadFiles(e.target.files); }}
+          />
+        </label>
+      </div>
 
-      <input
-        ref={fileRef}
-        type="file"
-        onChange={handleUpload}
-        className="hidden"
-      />
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => fileRef.current?.click()}
-        disabled={uploading}
-        className="text-xs"
+      {/* Drop zone / list */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+        }}
+        className={cn(
+          "rounded-lg transition-colors",
+          dragOver && "ring-2 ring-[#99ff33] ring-offset-1 bg-[#99ff33]/5"
+        )}
       >
-        <svg className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-        </svg>
-        {uploading ? "Uploading..." : "Attach file"}
-      </Button>
+        {loading ? (
+          <div className="space-y-1">
+            {[1, 2].map((i) => <div key={i} className="h-9 rounded-md bg-gray-100 animate-pulse" />)}
+          </div>
+        ) : attachments.length === 0 ? (
+          <label className="block border-2 border-dashed border-gray-200 rounded-lg p-4 text-center hover:border-[#99ff33]/60 hover:bg-[#99ff33]/5 cursor-pointer transition-all group">
+            <Upload size={16} className="mx-auto mb-1.5 text-gray-400 group-hover:text-[#2d5200]" />
+            <p className="text-xs text-gray-500 group-hover:text-gray-700">
+              Drop files here or <span className="font-semibold underline">browse</span>
+            </p>
+            <input
+              type="file"
+              multiple
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => { if (e.target.files) uploadFiles(e.target.files); }}
+            />
+          </label>
+        ) : (
+          <div className="space-y-1">
+            {attachments.map((a) => (
+              <div
+                key={a.id}
+                className="group flex items-center gap-2.5 px-2.5 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-colors"
+              >
+                <FileIconFor name={a.fileName} type={a.fileType} />
+                <div className="flex-1 min-w-0">
+                  <a
+                    href={a.filePath}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-gray-800 hover:text-[#2d5200] truncate block"
+                  >
+                    {a.fileName}
+                  </a>
+                  <p className="text-[10px] text-gray-400">
+                    {formatBytes(a.fileSize)}
+                    {a.user?.name && ` · ${a.user.name}`}
+                    {a.createdAt && ` · ${new Date(a.createdAt).toLocaleDateString()}`}
+                  </p>
+                </div>
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+                  <a
+                    href={a.filePath}
+                    download={a.fileName}
+                    className="h-6 w-6 flex items-center justify-center rounded-md hover:bg-gray-200 text-gray-400 hover:text-gray-700"
+                    title="Download"
+                  >
+                    <Download size={12} />
+                  </a>
+                  <button
+                    onClick={() => deleteAttachment(a.id, a.fileName)}
+                    className="h-6 w-6 flex items-center justify-center rounded-md hover:bg-red-50 text-gray-400 hover:text-red-600"
+                    title="Delete"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

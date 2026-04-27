@@ -45,7 +45,7 @@ type Comment = {
   content: string;
   isAi: boolean;
   createdAt: string;
-  author?: { name: string } | null;
+  author?: { id: string; name: string } | null;
 };
 
 type Task = {
@@ -80,6 +80,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [activeTab, setActiveTab] = useState<"comments" | "activity">("comments");
   const [commentText, setCommentText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const fetchTask = useCallback(async () => {
     const res = await fetch(`/api/tasks/${id}`);
@@ -95,6 +96,13 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     fetchTask();
   }, [fetchTask]);
+
+  useEffect(() => {
+    fetch("/api/users/me")
+      .then((r) => r.json())
+      .then((data) => { if (data?.id) setCurrentUserId(data.id); })
+      .catch(() => {});
+  }, []);
 
   // Fetch assignable members
   useEffect(() => {
@@ -586,7 +594,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 </p>
               )}
               {humanComments.map(comment => (
-                <div key={comment.id} className="flex gap-3">
+                <div key={comment.id} className="flex gap-3 group">
                   <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-medium flex-shrink-0">
                     {comment.author?.name?.[0]?.toUpperCase() || "?"}
                   </div>
@@ -596,6 +604,18 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                       <span className="text-xs text-muted-foreground">
                         {new Date(comment.createdAt).toLocaleString()}
                       </span>
+                      {currentUserId && comment.author?.id === currentUserId && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await fetch(`/api/tasks/${id}/comments/${comment.id}`, { method: "DELETE" });
+                            fetchTask();
+                          }}
+                          className="opacity-0 group-hover:opacity-100 ml-auto text-xs text-muted-foreground hover:text-destructive transition-opacity"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                     <p className="text-sm mt-1 whitespace-pre-wrap">{comment.content}</p>
                   </div>

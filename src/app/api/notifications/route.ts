@@ -1,8 +1,9 @@
 import { db } from "@/db";
 import { notifications } from "@/db/schema";
-import { eq, and, desc, isNull, isNotNull, or, lt, ne, type SQL } from "drizzle-orm";
+import { eq, and, desc, isNull, isNotNull, or, lt, ne, count, type SQL } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { parsePagination } from "@/lib/api";
 
 // List notifications for the current user
 export async function GET(req: Request) {
@@ -12,18 +13,13 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const unreadOnly = url.searchParams.get("unread") === "true";
   const tab = url.searchParams.get("tab") || "all";
-  const limit = parseInt(url.searchParams.get("limit") || "50");
+  const { page, limit, offset } = parsePagination(url.searchParams);
 
   const conditions: SQL[] = [eq(notifications.userId, user.id!)];
-  if (unreadOnly) {
-    conditions.push(eq(notifications.read, false));
-  }
+  if (unreadOnly) conditions.push(eq(notifications.read, false));
 
   const now = new Date();
-  const notSnoozed = or(
-    isNull(notifications.snoozedUntil),
-    lt(notifications.snoozedUntil, now),
-  );
+  const notSnoozed = or(isNull(notifications.snoozedUntil), lt(notifications.snoozedUntil, now));
 
   if (tab === "archived") {
     conditions.push(isNotNull(notifications.archivedAt));
@@ -36,32 +32,26 @@ export async function GET(req: Request) {
     conditions.push(isNull(notifications.archivedAt));
     if (notSnoozed) conditions.push(notSnoozed);
   } else {
-    // default: all non-archived + not snoozed
     conditions.push(isNull(notifications.archivedAt));
     if (notSnoozed) conditions.push(notSnoozed);
   }
 
-  const items = await db.query.notifications.findMany({
-    where: and(...conditions),
-    orderBy: [desc(notifications.createdAt)],
-    limit,
-  });
+  const where = and(...conditions);
 
-  const unreadCount = await db
-    .select({ count: notifications.id })
-    .from(notifications)
-    .where(
-      and(
-        eq(notifications.userId, user.id!),
-        eq(notifications.read, false),
-        isNull(notifications.archivedAt),
-      ),
-    );
+  const [items, [{ total }], [{ unreadCount }]] = await Promise.all([
+    db.query.notifications.findMany({
+      where,
+      orderBy: [desc(notifications.createdAt)],
+      limit,
+      offset,
+    }),
+    db.select({ total: count() }).from(notifications).where(where),
+    db.select({ unreadCount: count() }).from(notifications).where(
+      and(eq(notifications.userId, user.id!), eq(notifications.read, false), isNull(notifications.archivedAt)),
+    ),
+  ]);
 
-  return NextResponse.json({
-    notifications: items,
-    unreadCount: unreadCount.length,
-  });
+  return NextResponse.json({ notifications: items, unreadCount, total, page, limit, hasMore: page * limit < total });
 }
 
 // Mark notifications as read

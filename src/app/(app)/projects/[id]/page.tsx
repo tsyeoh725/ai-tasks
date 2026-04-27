@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { KanbanBoard } from "@/components/kanban-board";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
 import { RichTextEditor } from "@/components/rich-text-editor";
-import { DocumentList } from "@/components/document-list";
+import { DocumentsPanel } from "@/components/documents-panel";
 import { CalendarView } from "@/components/calendar-view";
 import { TimelineView } from "@/components/timeline-view";
 import { DashboardCharts } from "@/components/dashboard-charts";
@@ -34,8 +34,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { ProjectCustomFieldSettings } from "@/components/custom-fields";
 import { AutomationBuilder } from "@/components/automation-builder";
-import { ProjectMessages } from "@/components/project-messages";
 import { ProjectOverview } from "@/components/project-overview";
+import { ProjectStatusesPanel } from "@/components/project-statuses-panel";
+import { ProjectWorkflowsPanel } from "@/components/project-workflows-panel";
+import { ProjectHeaderEditable } from "@/components/project-header-editable";
+import { TaskDetailPanel } from "@/components/task-detail-panel";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +56,8 @@ type Task = {
   assignee?: { name: string } | null;
   subtasks?: { isDone: boolean }[];
   sectionId?: string | null;
+  clientId?: string | null;
+  client?: { id: string; name: string; logoUrl: string | null; brandColor: string } | null;
 };
 
 type Member = {
@@ -125,11 +130,14 @@ type Project = {
   id: string;
   name: string;
   color: string;
+  icon: string | null;
+  category: string | null;   // client
+  campaign: string | null;
   description: string | null;
   teamId: string | null;
 };
 
-type ActiveTab = "overview" | "board" | "list" | "calendar" | "timeline" | "dashboard" | "messages" | "brief" | "documents" | "fields" | "automations";
+type ActiveTab = "overview" | "board" | "list" | "calendar" | "timeline" | "dashboard" | "workspace" | "fields" | "automations" | "statuses" | "workflows";
 
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -139,7 +147,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [sections, setSections] = useState<Section[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [sortBy, setSortBy] = useState<string>("default");
-  const [groupBy, setGroupBy] = useState<string>("none");
+  const [groupBy, setGroupBy] = useState<string>("client");
   const [loading, setLoading] = useState(true);
   const [briefContent, setBriefContent] = useState("{}");
   const [briefLoaded, setBriefLoaded] = useState(false);
@@ -158,6 +166,8 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     const [projRes, tasksRes, sectionsRes] = await Promise.all([
@@ -184,7 +194,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
 
   // Load brief when tab is selected
   useEffect(() => {
-    if (activeTab === "brief" && !briefLoaded) {
+    if (activeTab === "workspace" && !briefLoaded) {
       fetch(`/api/briefs?projectId=${id}`)
         .then((r) => r.json())
         .then((data) => {
@@ -259,22 +269,50 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
       .catch(() => {});
   }, []);
 
-  async function handleTaskMove(taskId: string, newStatus: string) {
+  async function handleTaskMove(taskId: string, newStatus: string, index: number) {
+    // Capture original status for rollback
+    const original = tasks.find((t) => t.id === taskId);
+    if (!original) return;
+    const originalStatus = original.status;
+
+    // Optimistic
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
-    await fetch(`/api/tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
-    });
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, sortOrder: index * 1000 }),
+      });
+      if (!res.ok) throw new Error("API rejected");
+    } catch {
+      // Rollback
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: originalStatus } : t)));
+      toast.error({ title: "Couldn't move task", description: "Reverted to original column. Check your connection." });
+    }
   }
 
-  async function handleTaskSectionMove(taskId: string, newSectionId: string) {
-    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, sectionId: newSectionId } : t)));
-    await fetch(`/api/tasks/${taskId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sectionId: newSectionId }),
-    });
+  async function handleTaskSectionMove(taskId: string, newSectionId: string, index: number) {
+    // The Backlog column uses droppableId "__backlog__" — translate to null for the API
+    const finalSectionId = newSectionId === "__backlog__" ? null : newSectionId;
+
+    const original = tasks.find((t) => t.id === taskId);
+    if (!original) return;
+    const originalSectionId = original.sectionId ?? null;
+
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, sectionId: finalSectionId } : t)));
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId: finalSectionId, sortOrder: index * 1000 }),
+      });
+      if (!res.ok) throw new Error("API rejected");
+    } catch {
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, sectionId: originalSectionId } : t)));
+      toast.error({ title: "Couldn't move task", description: "Reverted to original column. Check your connection." });
+    }
   }
 
   async function handleBriefChange(content: string) {
@@ -517,62 +555,68 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
     { id: "list", label: "List" },
     { id: "calendar", label: "Calendar" },
     { id: "timeline", label: "Timeline" },
-    { id: "dashboard", label: "Dashboard" },
-    { id: "messages", label: "Messages" },
-    { id: "brief", label: "Brief" },
-    { id: "documents", label: "Documents" },
+    { id: "dashboard", label: "Insights" },
+    { id: "workspace", label: "Workspace" },
     { id: "fields", label: "Fields" },
     { id: "automations", label: "Automations" },
+    { id: "statuses", label: "Statuses" },
+    { id: "workflows", label: "Workflows" },
   ];
+
+  const taskTabsForAi = ["board", "list", "calendar", "timeline"] as ActiveTab[];
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex flex-col gap-3 p-4 border-b md:flex-row md:items-center md:justify-between md:gap-2">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="h-4 w-4 rounded-full shrink-0" style={{ backgroundColor: project.color }} />
-          <h1 className="text-xl font-bold truncate">{project.name}</h1>
-          <span className="text-sm text-muted-foreground shrink-0">{tasks.length} {tasks.length === 1 ? "task" : "tasks"}</span>
-        </div>
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Tab buttons — scroll horizontally on mobile */}
-          <div className="flex bg-muted rounded-lg p-0.5 overflow-x-auto scrollbar-none max-w-full snap-x snap-mandatory">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`shrink-0 snap-start whitespace-nowrap px-3 py-1 text-sm rounded-md transition-colors ${
-                  activeTab === tab.id
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+      {/* Header Row 1: project identity + actions */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b bg-white">
+        <ProjectHeaderEditable
+          project={project}
+          onUpdate={(patch) => setProject({ ...project, ...patch })}
+        />
+        <span className="text-[11px] text-gray-500 shrink-0 bg-gray-100 px-2 py-0.5 rounded-full font-medium">
+          {tasks.length} {tasks.length === 1 ? "task" : "tasks"}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAiPrioritize}
+            disabled={prioritizing || !taskTabsForAi.includes(activeTab)}
+            className="shrink-0"
+          >
+            <svg className={cn("h-4 w-4 mr-1", prioritizing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span className="hidden sm:inline">{prioritizing ? "Prioritizing…" : "AI Prioritize"}</span>
+            <span className="sm:hidden">{prioritizing ? "…" : "AI"}</span>
+          </Button>
+          <div className="shrink-0">
+            <CreateTaskDialog projectId={project.id} onCreated={fetchData} />
           </div>
-          {(activeTab === "board" || activeTab === "list" || activeTab === "calendar" || activeTab === "timeline") && (
-            <>
-              <Button variant="outline" size="sm" onClick={handleAiPrioritize} disabled={prioritizing} className="shrink-0">
-                <svg className={cn("h-4 w-4 mr-1", prioritizing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                <span className="hidden sm:inline">{prioritizing ? "Prioritizing…" : "AI Prioritize"}</span>
-                <span className="sm:hidden">{prioritizing ? "…" : "AI"}</span>
-              </Button>
-              <div className="shrink-0">
-                <CreateTaskDialog projectId={project.id} onCreated={fetchData} />
-              </div>
-            </>
-          )}
         </div>
+      </div>
+
+      {/* Header Row 2: tab strip */}
+      <div className="flex overflow-x-auto scrollbar-none border-b px-4">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
+              activeTab === tab.id
+                ? "border-[#99ff33] text-[#2d5200] bg-gradient-to-b from-transparent to-[#99ff33]/[0.05]"
+                : "border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
         {activeTab === "overview" && <ProjectOverview project={project} />}
-
-        {activeTab === "messages" && <ProjectMessages projectId={project.id} />}
 
         {activeTab === "board" && (
           <KanbanBoard
@@ -582,20 +626,11 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             onRefresh={fetchData}
             sections={sections}
             onTaskSectionMove={handleTaskSectionMove}
+            onTaskClick={setDetailTaskId}
           />
         )}
 
         {activeTab === "list" && (() => {
-          const rowPadding = density === "compact" ? "py-1" : "py-2";
-          const visibleColCount =
-            (visibleColumns.title ? 1 : 0) +
-            (visibleColumns.assignee ? 1 : 0) +
-            (visibleColumns.dueDate ? 1 : 0) +
-            (visibleColumns.priority ? 1 : 0) +
-            (visibleColumns.status ? 1 : 0) +
-            (visibleColumns.project ? 1 : 0) +
-            2; // select + done
-
           return (
           <div className="flex flex-col h-full">
             {/* Toolbar */}
@@ -620,6 +655,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="client">Client</SelectItem>
                   <SelectItem value="status">Status</SelectItem>
                   <SelectItem value="priority">Priority</SelectItem>
                   {sections.length > 0 && <SelectItem value="section">Section</SelectItem>}
@@ -783,120 +819,255 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
               </div>
             </div>
 
-            {/* Table */}
+            {/* Notion-style list */}
             <div className="flex-1 overflow-auto">
               {filteredTasks.length === 0 ? (
-                <p className="text-center text-muted-foreground py-12">
-                  {tasks.length === 0
-                    ? "No tasks yet. Create one to get started!"
-                    : "No tasks match the current filters."}
-                </p>
+                <div>
+                  <p className="text-center text-muted-foreground py-12">
+                    {tasks.length === 0
+                      ? "No tasks yet. Create one to get started!"
+                      : "No tasks match the current filters."}
+                  </p>
+                  <button
+                    onClick={() => setCreateDialogOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 text-gray-400 text-sm hover:bg-gray-50 cursor-pointer w-full border-b border-gray-100"
+                  >
+                    <span className="text-base leading-none">+</span>
+                    New task
+                  </button>
+                </div>
               ) : (
-                <table className="w-full min-w-[720px] md:min-w-0 text-sm">
-                  <thead className="sticky top-0 bg-card z-10">
-                    <tr className="border-b text-xs text-muted-foreground uppercase">
-                      <th className="w-10 px-4 py-2 text-left">
+                (() => {
+                  const sorted = [...filteredTasks];
+                  const priorityOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+                  const statusOrder: Record<string, number> = { todo: 0, in_progress: 1, blocked: 2, done: 3 };
+                  if (sortBy === "name") sorted.sort((a, b) => a.title.localeCompare(b.title));
+                  else if (sortBy === "priority") sorted.sort((a, b) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9));
+                  else if (sortBy === "dueDate") sorted.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+                  else if (sortBy === "status") sorted.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+
+                  const effectiveGroupBy = groupBy === "none" && sections.length > 0 ? "section" : groupBy;
+
+                  const statusDotColor: Record<string, string> = {
+                    todo: "bg-gray-300",
+                    in_progress: "bg-blue-500",
+                    done: "bg-green-500",
+                    blocked: "bg-red-500",
+                  };
+
+                  const priorityChipClass: Record<string, string> = {
+                    urgent: "bg-red-50 text-red-600 border border-red-200",
+                    high: "bg-orange-50 text-orange-600 border border-orange-100",
+                    medium: "bg-yellow-50 text-yellow-600 border border-yellow-100",
+                    low: "bg-gray-50 text-gray-500 border border-gray-200",
+                  };
+
+                  const renderTaskRow = (task: Task) => {
+                    const isSelected = selectedIds.has(task.id);
+                    const isDone = task.status === "done";
+                    const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && !isDone;
+                    return (
+                      <div
+                        key={task.id}
+                        className={cn(
+                          "flex items-center gap-2 px-4 py-2 hover:bg-gray-50 border-b border-gray-100 group cursor-pointer",
+                          isSelected && "bg-indigo-50"
+                        )}
+                      >
                         <input
                           type="checkbox"
-                          className="h-4 w-4 rounded"
-                          checked={
-                            filteredTasks.length > 0 &&
-                            filteredTasks.every((t) => selectedIds.has(t.id))
-                          }
-                          onChange={() =>
-                            toggleSelectAllVisible(filteredTasks.map((t) => t.id))
-                          }
+                          className="h-4 w-4 rounded border-gray-300 shrink-0"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(task.id)}
+                          onClick={(e) => e.stopPropagation()}
                         />
-                      </th>
-                      <th className="w-10 px-4 py-2 text-left"></th>
-                      {visibleColumns.title && <th className="px-4 py-2 text-left font-medium">Name</th>}
-                      {visibleColumns.assignee && <th className="w-32 px-4 py-2 text-left font-medium">Assignee</th>}
-                      {visibleColumns.dueDate && <th className="w-28 px-4 py-2 text-left font-medium">Due date</th>}
-                      {visibleColumns.priority && <th className="w-60 px-4 py-2 text-left font-medium">Priority</th>}
-                      {visibleColumns.status && <th className="w-28 px-4 py-2 text-left font-medium">Status</th>}
-                      {visibleColumns.project && <th className="w-28 px-4 py-2 text-left font-medium">Project</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const sorted = [...filteredTasks];
-                      const priorityOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
-                      const statusOrder: Record<string, number> = { todo: 0, in_progress: 1, blocked: 2, done: 3 };
-                      if (sortBy === "name") sorted.sort((a, b) => a.title.localeCompare(b.title));
-                      else if (sortBy === "priority") sorted.sort((a, b) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9));
-                      else if (sortBy === "dueDate") sorted.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
-                      else if (sortBy === "status") sorted.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+                        <span
+                          className={cn(
+                            "h-2.5 w-2.5 rounded-full shrink-0",
+                            statusDotColor[task.status] || "bg-gray-300"
+                          )}
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (e.metaKey || e.ctrlKey) {
+                              window.open(`/tasks/${task.id}`, "_blank");
+                              return;
+                            }
+                            setDetailTaskId(task.id);
+                          }}
+                          className={cn(
+                            "text-sm text-gray-900 flex-1 truncate text-left",
+                            isDone && "line-through text-gray-400"
+                          )}
+                        >
+                          {task.title}
+                        </button>
+                        {/* Right-side chips */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {task.assignee && (
+                            <div
+                              className="h-5 w-5 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-medium text-indigo-700 shrink-0"
+                              title={task.assignee.name}
+                            >
+                              {task.assignee.name[0]?.toUpperCase()}
+                            </div>
+                          )}
+                          {task.dueDate && (
+                            <span
+                              className={cn(
+                                "text-xs shrink-0",
+                                isOverdue ? "text-red-500 font-medium" : "text-gray-400"
+                              )}
+                            >
+                              {new Date(task.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </span>
+                          )}
+                          {task.priority && (
+                            <span
+                              className={cn(
+                                "text-xs px-1.5 py-0.5 rounded capitalize shrink-0",
+                                priorityChipClass[task.priority] || "bg-gray-50 text-gray-500 border border-gray-200"
+                              )}
+                            >
+                              {task.priority}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  };
 
-                      // If sections exist and no explicit grouping chosen, default to grouping by section.
-                      const effectiveGroupBy = groupBy === "none" && sections.length > 0 ? "section" : groupBy;
+                  const renderSectionHeader = (label: string, count: number) => (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      <span>{statusLabels[label] || label}</span>
+                      <span className="font-normal normal-case text-gray-400">{count}</span>
+                    </div>
+                  );
 
-                      const rowProps: RowCommon = {
-                        onToggle: handleTaskMove,
-                        onPatch: async (taskId, body) => {
-                          await patchTask(taskId, body);
-                          fetchData();
-                        },
-                        members,
-                        projectName: project.name,
-                        visibleColumns,
-                        rowPadding,
-                        selectedIds,
-                        onSelect: toggleSelect,
-                      };
+                  const renderNewTaskRow = () => (
+                    <button
+                      onClick={() => setCreateDialogOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-gray-400 text-sm hover:bg-gray-50 cursor-pointer w-full border-b border-gray-100"
+                    >
+                      <span className="text-base leading-none">+</span>
+                      New task
+                    </button>
+                  );
 
-                      if (effectiveGroupBy === "none") {
-                        return sorted.map((task) => (
-                          <TaskRow key={task.id} task={task} {...rowProps} />
-                        ));
-                      }
+                  if (effectiveGroupBy === "none") {
+                    return (
+                      <div>
+                        {sorted.map(renderTaskRow)}
+                        {renderNewTaskRow()}
+                      </div>
+                    );
+                  }
 
-                      if (effectiveGroupBy === "section") {
-                        const sectionName = (sid: string | null | undefined) =>
-                          sid ? (sections.find((s) => s.id === sid)?.name || "No section") : "No section";
+                  if (effectiveGroupBy === "section") {
+                    const sectionName = (sid: string | null | undefined) =>
+                      sid ? (sections.find((s) => s.id === sid)?.name || "No section") : "No section";
 
-                        const orderedSectionIds = [...sections.map((s) => s.id), null as string | null];
-                        const groups = new Map<string | null, typeof sorted>();
-                        for (const sid of orderedSectionIds) groups.set(sid, []);
-                        for (const t of sorted) {
-                          const key = t.sectionId && sections.some((s) => s.id === t.sectionId) ? t.sectionId : null;
-                          if (!groups.has(key)) groups.set(key, []);
-                          groups.get(key)!.push(t);
-                        }
+                    const orderedSectionIds: (string | null)[] = [...sections.map((s) => s.id), null];
+                    const groups = new Map<string | null, Task[]>();
+                    for (const sid of orderedSectionIds) groups.set(sid, []);
+                    for (const t of sorted) {
+                      const key = t.sectionId && sections.some((s) => s.id === t.sectionId) ? t.sectionId : null;
+                      if (!groups.has(key)) groups.set(key, []);
+                      groups.get(key)!.push(t);
+                    }
 
-                        return Array.from(groups.entries())
+                    return (
+                      <div>
+                        {Array.from(groups.entries())
                           .filter(([, groupTasks]) => groupTasks.length > 0)
                           .map(([sid, groupTasks]) => (
-                            <GroupSection
-                              key={sid ?? "__none__"}
-                              label={sectionName(sid)}
-                              tasks={groupTasks}
-                              colSpan={visibleColCount}
-                              {...rowProps}
-                            />
-                          ));
-                      }
+                            <div key={sid ?? "__none__"}>
+                              {renderSectionHeader(sectionName(sid), groupTasks.length)}
+                              {groupTasks.map(renderTaskRow)}
+                              {renderNewTaskRow()}
+                            </div>
+                          ))}
+                      </div>
+                    );
+                  }
 
-                      const groups: Record<string, typeof sorted> = {};
-                      for (const t of sorted) {
-                        const key = effectiveGroupBy === "status" ? t.status : t.priority;
-                        if (!groups[key]) groups[key] = [];
-                        groups[key].push(t);
+                  if (effectiveGroupBy === "client") {
+                    const groups = new Map<string, { label: string; brandColor: string; logoUrl: string | null; tasks: Task[] }>();
+                    for (const t of sorted) {
+                      const key = t.client?.id ?? "__no_client__";
+                      const label = t.client?.name ?? "No Client";
+                      if (!groups.has(key)) {
+                        groups.set(key, {
+                          label,
+                          brandColor: t.client?.brandColor ?? "#9ca3af",
+                          logoUrl: t.client?.logoUrl ?? null,
+                          tasks: [],
+                        });
                       }
+                      groups.get(key)!.tasks.push(t);
+                    }
 
-                      return Object.entries(groups).map(([group, groupTasks]) => (
-                        <GroupSection
-                          key={group}
-                          label={group}
-                          tasks={groupTasks}
-                          colSpan={visibleColCount}
-                          {...rowProps}
-                        />
-                      ));
-                    })()}
-                  </tbody>
-                </table>
+                    // Order: clients alphabetically, "No Client" last
+                    const ordered = Array.from(groups.entries()).sort(([ak, av], [bk, bv]) => {
+                      if (ak === "__no_client__") return 1;
+                      if (bk === "__no_client__") return -1;
+                      return av.label.localeCompare(bv.label);
+                    });
+
+                    return (
+                      <div>
+                        {ordered.map(([key, g]) => (
+                          <div key={key}>
+                            <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200">
+                              {g.logoUrl ? (
+                                <img src={g.logoUrl} alt="" className="h-4 w-4 rounded shrink-0 ring-1 ring-gray-200" />
+                              ) : (
+                                <span
+                                  className="h-2 w-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: g.brandColor }}
+                                />
+                              )}
+                              <span className="text-xs font-semibold text-gray-700">{g.label}</span>
+                              <span className="text-[10px] text-gray-400 bg-gray-200 px-1.5 rounded-full">{g.tasks.length}</span>
+                            </div>
+                            {g.tasks.map(renderTaskRow)}
+                            {renderNewTaskRow()}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  const groups: Record<string, Task[]> = {};
+                  for (const t of sorted) {
+                    const key = effectiveGroupBy === "status" ? t.status : t.priority;
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(t);
+                  }
+
+                  return (
+                    <div>
+                      {Object.entries(groups).map(([group, groupTasks]) => (
+                        <div key={group}>
+                          {renderSectionHeader(group, groupTasks.length)}
+                          {groupTasks.map(renderTaskRow)}
+                          {renderNewTaskRow()}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()
               )}
             </div>
+
+            {/* Controlled CreateTaskDialog for "New task" row */}
+            <CreateTaskDialog
+              projectId={project.id}
+              onCreated={() => { fetchData(); setCreateDialogOpen(false); }}
+              open={createDialogOpen}
+              onOpenChange={setCreateDialogOpen}
+            />
           </div>
           );
         })()}
@@ -933,33 +1104,47 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         )}
 
-        {activeTab === "brief" && (
-          <div className="p-6 max-w-3xl mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Project Brief</h2>
-              <span
-                className={cn(
-                  "text-xs transition-colors",
-                  briefStatus === "error" ? "text-red-400" : "text-muted-foreground"
-                )}
-              >
-                {briefStatus === "saving" && "Saving…"}
-                {briefStatus === "saved" && "Saved"}
-                {briefStatus === "error" && "Save failed — check connection"}
-              </span>
+        {activeTab === "workspace" && (
+          <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+            {/* Brief — Notion-style rich editor */}
+            <div className="rounded-2xl border border-gray-200 bg-white">
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-[#2d5200]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h2 className="text-sm font-semibold text-gray-800">Project Brief</h2>
+                  <span
+                    className={cn(
+                      "text-xs ml-2 transition-colors",
+                      briefStatus === "error" ? "text-red-400" : "text-gray-400"
+                    )}
+                  >
+                    {briefStatus === "saving" && "Saving…"}
+                    {briefStatus === "saved" && "Saved"}
+                    {briefStatus === "error" && "Save failed"}
+                  </span>
+                </div>
+              </div>
+              <div className="p-5">
+                <RichTextEditor
+                  content={briefContent}
+                  onChange={handleBriefChange}
+                  placeholder="Write a brief, drop in headings, lists, code blocks — type / for commands"
+                />
+              </div>
             </div>
-            <RichTextEditor
-              content={briefContent}
-              onChange={handleBriefChange}
-              placeholder="Write your project brief, specs, notes..."
-            />
-          </div>
-        )}
 
-        {activeTab === "documents" && (
-          <div className="p-6 max-w-3xl mx-auto">
-            <h2 className="text-lg font-semibold mb-4">Documents</h2>
-            <DocumentList projectId={project.id} />
+            {/* Documents (Drive + uploads) */}
+            <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
+                <svg className="w-4 h-4 text-[#2d5200]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                <h2 className="text-sm font-semibold text-gray-800">Documents</h2>
+              </div>
+              <DocumentsPanel projectId={project.id} />
+            </div>
           </div>
         )}
 
@@ -981,6 +1166,14 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             </p>
             <AutomationBuilder projectId={project.id} />
           </div>
+        )}
+
+        {activeTab === "statuses" && (
+          <ProjectStatusesPanel projectId={project.id} />
+        )}
+
+        {activeTab === "workflows" && (
+          <ProjectWorkflowsPanel projectId={project.id} />
         )}
       </div>
 
@@ -1151,6 +1344,13 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
           </div>
         </div>
       )}
+
+      <TaskDetailPanel
+        taskId={detailTaskId}
+        open={detailTaskId !== null}
+        onOpenChange={(o) => !o && setDetailTaskId(null)}
+        onUpdate={fetchData}
+      />
     </div>
   );
 }

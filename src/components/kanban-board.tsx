@@ -6,7 +6,6 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
-import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 type Task = {
@@ -29,10 +28,11 @@ type Section = {
 type Props = {
   tasks: Task[];
   projectId: string;
-  onTaskMove: (taskId: string, newStatus: string) => void;
+  onTaskMove: (taskId: string, newStatus: string, index: number) => void;
   onRefresh: () => void;
   sections?: Section[];
-  onTaskSectionMove?: (taskId: string, newSectionId: string) => void;
+  onTaskSectionMove?: (taskId: string, newSectionId: string, index: number) => void;
+  onTaskClick?: (taskId: string) => void;
 };
 
 const statusColumns = [
@@ -49,7 +49,7 @@ const priorityColors: Record<string, string> = {
   low: "border-l-blue-400",
 };
 
-export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections, onTaskSectionMove }: Props) {
+export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections, onTaskSectionMove, onTaskClick }: Props) {
   const useSections = !!sections && sections.length > 0;
   const [isMobile, setIsMobile] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -66,16 +66,25 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
 
   function handleDragEnd(result: DropResult) {
     if (!result.destination) return;
-    const destId = result.destination.droppableId;
+    const { droppableId: destId, index: destIndex } = result.destination;
     const taskId = result.draggableId;
-    if (destId === result.source.droppableId) return;
+    const sameColumn = destId === result.source.droppableId;
+    const sameIndex = destIndex === result.source.index;
+    if (sameColumn && sameIndex) return;
 
     if (useSections && onTaskSectionMove) {
-      onTaskSectionMove(taskId, destId);
+      onTaskSectionMove(taskId, destId, destIndex);
     } else {
-      onTaskMove(taskId, destId);
+      onTaskMove(taskId, destId, destIndex);
     }
   }
+
+  // Catch-all: tasks whose sectionId is null OR points to a deleted section.
+  // Without this, tasks could silently disappear from the board.
+  const validSectionIds = new Set((sections ?? []).map((s) => s.id));
+  const orphanedTasks = useSections
+    ? tasks.filter((t) => !t.sectionId || !validSectionIds.has(t.sectionId))
+    : [];
 
   // Build the list of columns for the mobile chip row + swipe deck
   const mobileColumns: Array<{
@@ -87,14 +96,25 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
     createDefaultStatus?: string;
     createSectionId?: string;
   }> = useSections
-    ? sections!.map((section) => ({
-        key: section.id,
-        droppableId: section.id,
-        title: section.name,
-        dotClass: "bg-indigo-500",
-        tasks: tasks.filter((t) => t.sectionId === section.id),
-        createSectionId: section.id,
-      }))
+    ? [
+        // Backlog column always first when grouping by section
+        {
+          key: "__backlog__",
+          droppableId: "__backlog__",
+          title: "Backlog",
+          dotClass: "bg-gray-400",
+          tasks: orphanedTasks,
+          createSectionId: "",
+        },
+        ...sections!.map((section) => ({
+          key: section.id,
+          droppableId: section.id,
+          title: section.name,
+          dotClass: "bg-[#99ff33]",
+          tasks: tasks.filter((t) => t.sectionId === section.id),
+          createSectionId: section.id,
+        })),
+      ]
     : statusColumns.map((col) => ({
         key: col.id,
         droppableId: col.id,
@@ -173,6 +193,7 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
                   tasks={col.tasks}
                   projectId={projectId}
                   onRefresh={onRefresh}
+                  onTaskClick={onTaskClick}
                   createDefaultStatus={col.createDefaultStatus}
                   createSectionId={col.createSectionId}
                   fullWidth
@@ -190,6 +211,20 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
       <div className="flex gap-4 overflow-x-auto p-4 h-full">
         {useSections ? (
           <>
+            {/* Backlog column for tasks without a section */}
+            {orphanedTasks.length > 0 && (
+              <BoardColumn
+                key="__backlog__"
+                droppableId="__backlog__"
+                title="Backlog"
+                dotClass="bg-gray-400"
+                tasks={orphanedTasks}
+                projectId={projectId}
+                onRefresh={onRefresh}
+                  onTaskClick={onTaskClick}
+                createSectionId=""
+              />
+            )}
             {sections!.map((section) => {
               const columnTasks = tasks.filter((t) => t.sectionId === section.id);
               return (
@@ -197,10 +232,11 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
                   key={section.id}
                   droppableId={section.id}
                   title={section.name}
-                  dotClass="bg-indigo-500"
+                  dotClass="bg-[#99ff33]"
                   tasks={columnTasks}
                   projectId={projectId}
                   onRefresh={onRefresh}
+                  onTaskClick={onTaskClick}
                   createSectionId={section.id}
                 />
               );
@@ -219,6 +255,7 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
                 tasks={columnTasks}
                 projectId={projectId}
                 onRefresh={onRefresh}
+                  onTaskClick={onTaskClick}
                 createDefaultStatus={col.id}
               />
             );
@@ -239,9 +276,10 @@ type ColumnProps = {
   createDefaultStatus?: string;
   createSectionId?: string;
   fullWidth?: boolean;
+  onTaskClick?: (taskId: string) => void;
 };
 
-function BoardColumn({ droppableId, title, dotClass, tasks, projectId, onRefresh, createDefaultStatus, createSectionId, fullWidth }: ColumnProps) {
+function BoardColumn({ droppableId, title, dotClass, tasks, projectId, onRefresh, createDefaultStatus, createSectionId, fullWidth, onTaskClick }: ColumnProps) {
   return (
     <div className={cn("flex flex-col bg-muted/50 rounded-lg", fullWidth ? "w-full h-full mx-3 mb-3" : "min-w-[280px] w-[280px]")}>
       <div className="flex items-center justify-between p-3 border-b">
@@ -276,44 +314,57 @@ function BoardColumn({ droppableId, title, dotClass, tasks, projectId, onRefresh
           <div
             ref={provided.innerRef}
             {...provided.droppableProps}
-            className={`flex-1 p-2 space-y-2 overflow-y-auto min-h-[100px] transition-colors ${
-              snapshot.isDraggingOver ? "bg-accent/50" : ""
-            }`}
+            className={cn(
+              "flex-1 p-2 space-y-2 overflow-y-auto min-h-[100px] transition-colors duration-200 rounded-md",
+              // Brand-tinted highlight on the active drop target
+              snapshot.isDraggingOver && "bg-[#99ff33]/10 ring-2 ring-inset ring-[#99ff33]/40"
+            )}
           >
             {tasks.map((task, index) => (
               <Draggable key={task.id} draggableId={task.id} index={index}>
                 {(provided, snapshot) => (
-                  <Link href={`/tasks/${task.id}`}>
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.draggableProps}
-                      {...provided.dragHandleProps}
-                      className={`p-3 bg-card rounded-md border border-l-4 ${
-                        priorityColors[task.priority] || "border-l-gray-400"
-                      } shadow-sm hover:shadow-md transition-shadow ${
-                        snapshot.isDragging ? "shadow-lg ring-2 ring-primary/20" : ""
-                      }`}
-                    >
-                      <p className="text-sm font-medium leading-snug">{task.title}</p>
-                      <div className="flex items-center gap-2 mt-2">
-                        {task.dueDate && (
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(task.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                          </span>
-                        )}
-                        {task.subtasks && task.subtasks.length > 0 && (
-                          <span className="text-xs text-muted-foreground">
-                            {task.subtasks.filter((s) => s.isDone).length}/{task.subtasks.length}
-                          </span>
-                        )}
-                        {task.assignee && (
-                          <span className="ml-auto text-xs bg-primary/10 text-primary px-1.5 py-0.5 rounded">
-                            {task.assignee.name.split(" ")[0]}
-                          </span>
-                        )}
-                      </div>
+                  <div
+                    ref={provided.innerRef}
+                    {...provided.draggableProps}
+                    {...provided.dragHandleProps}
+                    onClick={(e) => {
+                      // Don't trigger click if a drag was initiated; @hello-pangea/dnd
+                      // sets pointer-events / suppresses synthetic clicks during drag.
+                      if (e.metaKey || e.ctrlKey) {
+                        window.open(`/tasks/${task.id}`, "_blank");
+                        return;
+                      }
+                      onTaskClick?.(task.id);
+                    }}
+                    className={cn(
+                      "p-3 bg-white rounded-md border border-gray-200 border-l-4 cursor-grab active:cursor-grabbing",
+                      priorityColors[task.priority] || "border-l-gray-400",
+                      "shadow-sm hover:shadow-md hover:border-[#99ff33]/50",
+                      // Spec: 200ms ease-out on settle
+                      "transition-[box-shadow,transform,border-color] duration-200 ease-out",
+                      // Spec: dragged card → elevation shadow + slight rotation + brand ring
+                      snapshot.isDragging && "shadow-[0_8px_24px_rgb(0_0_0/0.15)] ring-2 ring-[#99ff33]/40 rotate-[2deg] cursor-grabbing"
+                    )}
+                  >
+                    <p className="text-sm font-medium leading-snug text-gray-900">{task.title}</p>
+                    <div className="flex items-center gap-2 mt-2">
+                      {task.dueDate && (
+                        <span className="text-xs text-gray-500">
+                          {new Date(task.dueDate).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </span>
+                      )}
+                      {task.subtasks && task.subtasks.length > 0 && (
+                        <span className="text-xs text-gray-500">
+                          {task.subtasks.filter((s) => s.isDone).length}/{task.subtasks.length}
+                        </span>
+                      )}
+                      {task.assignee && (
+                        <span className="ml-auto text-xs bg-[#99ff33]/15 text-[#2d5200] px-1.5 py-0.5 rounded font-medium">
+                          {task.assignee.name.split(" ")[0]}
+                        </span>
+                      )}
                     </div>
-                  </Link>
+                  </div>
                 )}
               </Draggable>
             ))}

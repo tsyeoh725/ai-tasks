@@ -9,7 +9,7 @@ export function GlobalSearch() {
     <>
       <button
         onClick={() => open()}
-        className="md:hidden h-11 w-11 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-white/70 hover:text-white transition-colors"
+        className="md:hidden h-11 w-11 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 hover:text-slate-900 transition-colors"
         type="button"
         aria-label="Search"
       >

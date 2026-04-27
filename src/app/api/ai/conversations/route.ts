@@ -1,20 +1,29 @@
 import { db } from "@/db";
 import { aiConversations, aiMessages } from "@/db/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, count } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { parsePagination } from "@/lib/api";
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  const conversations = await db.query.aiConversations.findMany({
-    where: eq(aiConversations.userId, user.id!),
-    orderBy: [desc(aiConversations.updatedAt)],
-    limit: 50,
-  });
+  const { searchParams } = new URL(req.url);
+  const { page, limit, offset } = parsePagination(searchParams);
+  const where = eq(aiConversations.userId, user.id!);
 
-  return NextResponse.json({ conversations });
+  const [conversations, [{ total }]] = await Promise.all([
+    db.query.aiConversations.findMany({
+      where,
+      orderBy: [desc(aiConversations.updatedAt)],
+      limit,
+      offset,
+    }),
+    db.select({ total: count() }).from(aiConversations).where(where),
+  ]);
+
+  return NextResponse.json({ conversations, total, page, limit, hasMore: page * limit < total });
 }
 
 export async function DELETE(req: Request) {

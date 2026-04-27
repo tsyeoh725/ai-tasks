@@ -8,18 +8,9 @@ import { MobileBottomBar } from "@/components/mobile-bottom-bar";
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarProvider>
-      <div className="relative flex flex-col h-screen isolate">
-        {/* Ambient gradient — fixed behind everything */}
-        <div
-          aria-hidden
-          className="pointer-events-none fixed inset-0 -z-10"
-          style={{
-            background:
-              "radial-gradient(ellipse at 20% 0%, rgb(30 27 75 / 0.8), transparent 50%), radial-gradient(ellipse at 80% 100%, rgb(76 29 149 / 0.6), transparent 50%), linear-gradient(180deg, rgb(15 23 42) 0%, rgb(2 6 23) 100%)",
-          }}
-        />
+      <div className="relative flex flex-col h-screen bg-slate-50 dark:bg-[#0a0e0a]">
         <TopHeader />
-        <div className="flex flex-1 overflow-hidden relative">
+        <div className="flex flex-1 overflow-hidden">
           <Sidebar />
           <MobileSidebarBackdrop />
           <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 pb-16 md:pb-0">

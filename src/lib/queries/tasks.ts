@@ -14,15 +14,30 @@ export type FormattedTask = {
   projectId: string;
   projectName: string;
   projectColor: string;
+  // Client info — resolved from tasks.clientId or projects.clientId or projects.category
+  clientId: string | null;
+  clientName: string | null;
   assignee: { name: string } | null;
 };
 
 type TaskWithRelations = typeof tasks.$inferSelect & {
-  project: { name: string; color: string };
+  project: { name: string; color: string; clientId: string | null; category: string | null; client?: { id: string; name: string } | null };
+  client?: { id: string; name: string } | null;
   assignee: { name: string } | null;
 };
 
 export function formatTask(t: TaskWithRelations): FormattedTask {
+  // Prefer task.client (direct), then project.client (FK), then project.category (legacy text)
+  const clientName =
+    t.client?.name ??
+    t.project.client?.name ??
+    t.project.category ??
+    null;
+  const clientId =
+    t.client?.id ??
+    t.project.client?.id ??
+    t.project.clientId ??
+    null;
   return {
     id: t.id,
     title: t.title,
@@ -34,6 +49,8 @@ export function formatTask(t: TaskWithRelations): FormattedTask {
     projectId: t.projectId,
     projectName: t.project.name,
     projectColor: t.project.color,
+    clientId,
+    clientName,
     assignee: t.assignee ? { name: t.assignee.name } : null,
   };
 }
@@ -61,7 +78,11 @@ export async function getAccessibleTasks(userId: string) {
   return db.query.tasks.findMany({
     where: inArray(tasks.projectId, projectIds),
     with: {
-      project: { columns: { name: true, color: true } },
+      project: {
+        columns: { name: true, color: true, clientId: true, category: true },
+        with: { client: { columns: { id: true, name: true } } },
+      },
+      client: { columns: { id: true, name: true } },
       assignee: { columns: { name: true } },
     },
     orderBy: [desc(tasks.updatedAt)],
@@ -119,7 +140,11 @@ export async function getMyTasks(
   const rows = await db.query.tasks.findMany({
     where: and(...conditions),
     with: {
-      project: { columns: { name: true, color: true } },
+      project: {
+        columns: { name: true, color: true, clientId: true, category: true },
+        with: { client: { columns: { id: true, name: true } } },
+      },
+      client: { columns: { id: true, name: true } },
       assignee: { columns: { name: true } },
     },
     orderBy:
@@ -148,7 +173,11 @@ export async function getOverdueTasks(userId: string) {
       ne(tasks.status, "done")
     ),
     with: {
-      project: { columns: { name: true, color: true } },
+      project: {
+        columns: { name: true, color: true, clientId: true, category: true },
+        with: { client: { columns: { id: true, name: true } } },
+      },
+      client: { columns: { id: true, name: true } },
       assignee: { columns: { name: true } },
     },
     orderBy: (t, { asc }) => [asc(t.dueDate)],

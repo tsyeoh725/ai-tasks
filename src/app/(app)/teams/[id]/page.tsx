@@ -8,6 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 
 type Member = {
@@ -75,6 +82,15 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       setInviteEmail("");
       fetchTeam();
     }
+  }
+
+  async function handleRoleChange(userId: string, newRole: string) {
+    await fetch(`/api/teams/${id}/members/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: newRole }),
+    });
+    fetchTeam();
   }
 
   async function handleRemoveMember(memberId: string) {
@@ -171,9 +187,24 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={member.role === "owner" ? "default" : "outline"} className="text-xs">
-                    {roleLabels[member.role] || member.role}
-                  </Badge>
+                  {isAdmin && member.role !== "owner" ? (
+                    <Select
+                      value={member.role}
+                      onValueChange={(v) => v && handleRoleChange(member.userId, v)}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-24 border-0 shadow-none">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Admin</SelectItem>
+                        <SelectItem value="member">Member</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Badge variant={member.role === "owner" ? "default" : "outline"} className="text-xs">
+                      {roleLabels[member.role] || member.role}
+                    </Badge>
+                  )}
                   {isAdmin && member.role !== "owner" && (
                     <Button
                       variant="ghost"

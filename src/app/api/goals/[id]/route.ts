@@ -46,6 +46,14 @@ export async function PATCH(
   if (updates.progress !== undefined) updateData.progress = updates.progress;
   if (updates.dueDate !== undefined)
     updateData.dueDate = updates.dueDate ? new Date(updates.dueDate) : null;
+  if (updates.startDate !== undefined)
+    updateData.startDate = updates.startDate ? new Date(updates.startDate) : null;
+  if (updates.specific !== undefined) updateData.specific = updates.specific;
+  if (updates.measurable !== undefined) updateData.measurable = updates.measurable;
+  if (updates.achievable !== undefined) updateData.achievable = updates.achievable;
+  if (updates.relevant !== undefined) updateData.relevant = updates.relevant;
+  if (updates.timeBound !== undefined) updateData.timeBound = updates.timeBound;
+  if (updates.reminders !== undefined) updateData.reminders = JSON.stringify(updates.reminders);
 
   await db.update(goals).set(updateData).where(eq(goals.id, id));
 

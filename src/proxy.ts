@@ -15,7 +15,12 @@ export async function proxy(req: NextRequest) {
   const isApiAuth = req.nextUrl.pathname.startsWith("/api/auth");
   const isApiV1 = req.nextUrl.pathname.startsWith("/api/v1");
 
-  if (isApiAuth || isApiV1) {
+  const isPublicApi =
+    req.nextUrl.pathname.startsWith("/api/f") ||
+    /^\/api\/forms\/[^/]+\/submit$/.test(req.nextUrl.pathname);
+  const isPublicPage = req.nextUrl.pathname.startsWith("/f/");
+
+  if (isApiAuth || isApiV1 || isPublicApi || isPublicPage) {
     return NextResponse.next();
   }
 

@@ -21,6 +21,15 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
+import { BUILTIN_TEMPLATES } from "@/lib/project-templates";
+import { Sparkles, FolderPlus } from "lucide-react";
+import Link from "next/link";
+
+// ─── Starter templates (always visible regardless of user-created templates) ──
+const STARTER_TEMPLATES = BUILTIN_TEMPLATES.map((t) => ({
+  ...t,
+  starter: true as const,
+}));
 
 type Template = {
   id: string;
@@ -431,13 +440,54 @@ export default function TemplatesPage() {
         </Card>
       )}
 
-      {/* Template Grid */}
+      {/* Starter templates section — always shown */}
+      <section className="mb-8">
+        <div className="flex items-center gap-2 mb-3">
+          <Sparkles size={14} className="text-[#2d5200]" />
+          <h2 className="text-sm font-bold text-gray-800">Starter Templates</h2>
+          <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded-full">{STARTER_TEMPLATES.length}</span>
+          <p className="text-xs text-gray-500 ml-auto">Pre-built workflows to get you running fast</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {STARTER_TEMPLATES.map((tmpl) => (
+            <Link
+              key={tmpl.slug}
+              href={`/projects/new?template=${tmpl.slug}`}
+              className="group p-4 rounded-xl border border-gray-200 hover:border-[#99ff33] hover:shadow-[0_4px_20px_rgb(153_255_51/0.12)] transition-all bg-white block"
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className="h-10 w-10 rounded-xl flex items-center justify-center text-2xl shadow-sm shrink-0"
+                  style={{ backgroundColor: `${tmpl.color}20` }}
+                >
+                  {tmpl.icon}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-gray-900 leading-tight">{tmpl.name}</p>
+                  <p className="text-xs text-gray-500 mt-1 line-clamp-2 leading-snug">{tmpl.description}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+                <span className="text-[10px] text-gray-400">{tmpl.sections.length} sections</span>
+                <span className="ml-auto text-[10px] text-[#2d5200] font-semibold flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <FolderPlus size={10} /> Use template →
+                </span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* User's saved templates */}
       {loading ? (
         <p className="text-muted-foreground">Loading templates...</p>
       ) : filtered.length === 0 ? (
-        <p className="text-muted-foreground">
-          No templates found. Create one to get started.
-        </p>
+        <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/40 p-6 text-center">
+          <p className="text-sm font-medium text-gray-700 mb-1">No saved templates yet</p>
+          <p className="text-xs text-gray-500">
+            Pick a starter above, or click <span className="font-semibold">+ New Template</span> to create your own.
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((template) => (

@@ -28,17 +28,179 @@ export const teamMembers = sqliteTable("team_members", {
   joinedAt: integer("joined_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ============ CLIENTS ============
+export const clients = sqliteTable("clients", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  logoUrl: text("logo_url"),
+  brief: text("brief"), // rich-text brief / intro / context
+  brandColor: text("brand_color").default("#99ff33"),
+  // Contact
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  contactPhone: text("contact_phone"),
+  whatsapp: text("whatsapp"),
+  website: text("website"),
+  // Business
+  industry: text("industry"),
+  billingAddress: text("billing_address"),
+  taxId: text("tax_id"),
+  currency: text("currency").default("USD"),
+  // Status
+  status: text("status", { enum: ["active", "onboarding", "paused", "archived"] }).notNull().default("active"),
+  // Service categories — JSON array, e.g. ["seo","social_media","performance"]
+  services: text("services").default("[]"),
+  // Flexible extras
+  customFields: text("custom_fields").default("{}"), // JSON blob for highly customizable fields
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const clientInvoices = sqliteTable("client_invoices", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  number: text("number").notNull(), // e.g. "INV-2026-001"
+  title: text("title"),
+  amount: real("amount").notNull(),
+  currency: text("currency").notNull().default("USD"),
+  status: text("status", { enum: ["draft", "sent", "paid", "overdue", "void"] }).notNull().default("draft"),
+  issuedDate: integer("issued_date", { mode: "timestamp" }),
+  dueDate: integer("due_date", { mode: "timestamp" }),
+  paidDate: integer("paid_date", { mode: "timestamp" }),
+  items: text("items").default("[]"), // JSON array of line items
+  notes: text("notes"),
+  filePath: text("file_path"), // optional PDF
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const clientPayments = sqliteTable("client_payments", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  invoiceId: text("invoice_id").references(() => clientInvoices.id, { onDelete: "set null" }),
+  amount: real("amount").notNull(),
+  currency: text("currency").notNull().default("USD"),
+  paymentDate: integer("payment_date", { mode: "timestamp" }).notNull(),
+  reference: text("reference"), // bank reference / transaction ID
+  source: text("source", { enum: ["bank_import", "manual", "stripe", "other"] }).notNull().default("manual"),
+  rawDescription: text("raw_description"), // unprocessed bank statement line
+  matched: integer("matched", { mode: "boolean" }).notNull().default(false),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const clientLinks = sqliteTable("client_links", {
+  id: text("id").primaryKey(),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  platform: text("platform").notNull(), // "meta_ads", "google_ads", "google_analytics", "slack", "drive", "custom"
+  label: text("label").notNull(),
+  url: text("url").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// Project ↔ Client junction (many-to-many)
+export const projectClients = sqliteTable("project_clients", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  clientId: text("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// ============ CRM LEADS ============
+export const leads = sqliteTable("leads", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => users.id),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
+  // Lead identity
+  name: text("name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  company: text("company"),
+  website: text("website"),
+  jobTitle: text("job_title"),
+  // Source & lifecycle
+  source: text("source", { enum: ["inbound", "outbound", "referral", "social", "website", "event", "import", "manual"] }).notNull().default("manual"),
+  sourceDetail: text("source_detail"), // free text — "Acme referral", "Q1 trade show", URL, etc.
+  status: text("status", { enum: ["new", "contacted", "qualified", "proposal", "negotiation", "won", "lost", "nurture"] }).notNull().default("new"),
+  // Value
+  estimatedValue: real("estimated_value"),
+  currency: text("currency").default("USD"),
+  // Service interest
+  services: text("services").default("[]"), // JSON array of service tags
+  // Notes & tracking
+  notes: text("notes"),
+  tags: text("tags").default("[]"), // JSON array
+  customFields: text("custom_fields").default("{}"),
+  // Conversion
+  convertedClientId: text("converted_client_id").references(() => clients.id, { onDelete: "set null" }),
+  convertedAt: integer("converted_at", { mode: "timestamp" }),
+  // Activity
+  lastContactedAt: integer("last_contacted_at", { mode: "timestamp" }),
+  nextFollowUpAt: integer("next_follow_up_at", { mode: "timestamp" }),
+  assignedToId: text("assigned_to_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const leadActivities = sqliteTable("lead_activities", {
+  id: text("id").primaryKey(),
+  leadId: text("lead_id").notNull().references(() => leads.id, { onDelete: "cascade" }),
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+  type: text("type", { enum: ["note", "call", "email", "meeting", "task", "status_change"] }).notNull().default("note"),
+  content: text("content").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// ============ TEAM WORKSPACE (2D pixel-art office) ============
+export const teamWorkspace = sqliteTable("team_workspace", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
+  // Pixel-art character
+  character: text("character").notNull().default("dev_1"), // sprite key (dev_1, designer_1, etc.)
+  characterColor: text("character_color").notNull().default("#99ff33"),
+  // Position on the office grid
+  x: integer("x").notNull().default(5),
+  y: integer("y").notNull().default(5),
+  // Status
+  statusEmoji: text("status_emoji").default("💻"),
+  statusText: text("status_text"),
+  isOnline: integer("is_online", { mode: "boolean" }).notNull().default(true),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ============ PROJECTS ============
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
-  color: text("color").notNull().default("#6366f1"), // indigo
+  color: text("color").notNull().default("#99ff33"), // Edge Point brand green
   icon: text("icon"), // emoji like "\u{1F4C1}" or null
+  category: text("category"), // client name (legacy text) — superseded by clientId
+  clientId: text("client_id").references(() => clients.id, { onDelete: "set null" }),
+  campaign: text("campaign"), // higher-level grouping (e.g. "Spring 2026 Campaign")
+  driveFolderId: text("drive_folder_id"),
+  driveFolderName: text("drive_folder_name"),
   teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }), // null = personal
   ownerId: text("owner_id").notNull().references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// ============ PROJECT STATUSES (custom Notion-style statuses) ============
+export const projectStatuses = sqliteTable("project_statuses", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  color: text("color").notNull().default("#6366f1"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  isFinal: integer("is_final", { mode: "boolean" }).notNull().default(false), // "done" equivalent
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
 // ============ SECTIONS ============
@@ -58,6 +220,7 @@ export const tasks = sqliteTable("tasks", {
   status: text("status", { enum: ["todo", "in_progress", "done", "blocked"] }).notNull().default("todo"),
   priority: text("priority", { enum: ["low", "medium", "high", "urgent"] }).notNull().default("medium"),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  clientId: text("client_id").references(() => clients.id, { onDelete: "set null" }),
   sectionId: text("section_id").references(() => sections.id, { onDelete: "set null" }),
   assigneeId: text("assignee_id").references(() => users.id),
   createdById: text("created_by_id").notNull().references(() => users.id),
@@ -70,6 +233,7 @@ export const tasks = sqliteTable("tasks", {
   isMilestone: integer("is_milestone", { mode: "boolean" }).notNull().default(false),
   taskType: text("task_type", { enum: ["task", "milestone", "approval"] }).notNull().default("task"),
   estimatedHours: real("estimated_hours"),
+  statusId: text("status_id").references(() => projectStatuses.id, { onDelete: "set null" }),
   recurrenceRule: text("recurrence_rule"), // JSON: { frequency, interval, dayOfWeek, etc. }
   recurrenceParentId: text("recurrence_parent_id"), // original recurring task
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
@@ -309,7 +473,15 @@ export const goals = sqliteTable("goals", {
   ownerId: text("owner_id").notNull().references(() => users.id),
   teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
   parentGoalId: text("parent_goal_id"), // self-referencing for nested goals
+  startDate: integer("start_date", { mode: "timestamp" }),
   dueDate: integer("due_date", { mode: "timestamp" }),
+  // SMART fields
+  specific: text("specific"),
+  measurable: text("measurable"),
+  achievable: text("achievable"),
+  relevant: text("relevant"),
+  timeBound: text("time_bound"),
+  reminders: text("reminders").default("[]"), // JSON array: [{ type, value, unit }]
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
@@ -680,6 +852,43 @@ export const globalSettings = sqliteTable("global_settings", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ============ WORKFLOW CHAINS ============
+// A chain is a sequence of tasks that auto-advance when the current task is completed/approved.
+export const workflowChains = sqliteTable("workflow_chains", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  createdById: text("created_by_id").notNull().references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const workflowChainSteps = sqliteTable("workflow_chain_steps", {
+  id: text("id").primaryKey(),
+  chainId: text("chain_id").notNull().references(() => workflowChains.id, { onDelete: "cascade" }),
+  sortOrder: integer("sort_order").notNull().default(0),
+  taskTitle: text("task_title").notNull(), // template for the task to create
+  taskDescription: text("task_description"),
+  assigneeId: text("assignee_id").references(() => users.id, { onDelete: "set null" }),
+  trigger: text("trigger", { enum: ["completed", "approved", "manual"] }).notNull().default("completed"),
+  delayHours: integer("delay_hours").notNull().default(0), // wait N hours after trigger
+  action: text("action", { enum: ["create_task", "notify", "upload_to_drive", "ai_verify_drive"] }).notNull().default("create_task"),
+  actionConfig: text("action_config").default("{}"), // JSON extra config per action type
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export const workflowChainRuns = sqliteTable("workflow_chain_runs", {
+  id: text("id").primaryKey(),
+  chainId: text("chain_id").notNull().references(() => workflowChains.id, { onDelete: "cascade" }),
+  currentStepId: text("current_step_id").references(() => workflowChainSteps.id, { onDelete: "set null" }),
+  status: text("status", { enum: ["running", "paused", "completed", "failed"] }).notNull().default("running"),
+  log: text("log").default("[]"), // JSON array of { stepId, action, ts, result }
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  completedAt: integer("completed_at", { mode: "timestamp" }),
+});
+
 // ============ RELATIONS ============
 export const usersRelations = relations(users, ({ many }) => ({
   teams: many(teamMembers),
@@ -705,10 +914,62 @@ export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
 export const projectsRelations = relations(projects, ({ one, many }) => ({
   owner: one(users, { fields: [projects.ownerId], references: [users.id] }),
   team: one(teams, { fields: [projects.teamId], references: [teams.id] }),
+  client: one(clients, { fields: [projects.clientId], references: [clients.id] }),
   tasks: many(tasks),
   sections: many(sections),
   documents: many(documents),
   brief: many(projectBriefs),
+  statuses: many(projectStatuses),
+  workflowChains: many(workflowChains),
+  linkedClients: many(projectClients),
+}));
+
+export const clientsRelations = relations(clients, ({ one, many }) => ({
+  owner: one(users, { fields: [clients.ownerId], references: [users.id] }),
+  team: one(teams, { fields: [clients.teamId], references: [teams.id] }),
+  projects: many(projects),
+  invoices: many(clientInvoices),
+  payments: many(clientPayments),
+  links: many(clientLinks),
+  linkedProjects: many(projectClients),
+  tasks: many(tasks),
+}));
+
+export const clientInvoicesRelations = relations(clientInvoices, ({ one, many }) => ({
+  client: one(clients, { fields: [clientInvoices.clientId], references: [clients.id] }),
+  payments: many(clientPayments),
+}));
+
+export const clientPaymentsRelations = relations(clientPayments, ({ one }) => ({
+  client: one(clients, { fields: [clientPayments.clientId], references: [clients.id] }),
+  invoice: one(clientInvoices, { fields: [clientPayments.invoiceId], references: [clientInvoices.id] }),
+}));
+
+export const clientLinksRelations = relations(clientLinks, ({ one }) => ({
+  client: one(clients, { fields: [clientLinks.clientId], references: [clients.id] }),
+}));
+
+export const projectClientsRelations = relations(projectClients, ({ one }) => ({
+  project: one(projects, { fields: [projectClients.projectId], references: [projects.id] }),
+  client: one(clients, { fields: [projectClients.clientId], references: [clients.id] }),
+}));
+
+export const leadsRelations = relations(leads, ({ one, many }) => ({
+  owner: one(users, { fields: [leads.ownerId], references: [users.id] }),
+  assignedTo: one(users, { fields: [leads.assignedToId], references: [users.id], relationName: "leadAssignee" }),
+  team: one(teams, { fields: [leads.teamId], references: [teams.id] }),
+  convertedClient: one(clients, { fields: [leads.convertedClientId], references: [clients.id] }),
+  activities: many(leadActivities),
+}));
+
+export const leadActivitiesRelations = relations(leadActivities, ({ one }) => ({
+  lead: one(leads, { fields: [leadActivities.leadId], references: [leads.id] }),
+  user: one(users, { fields: [leadActivities.userId], references: [users.id] }),
+}));
+
+export const teamWorkspaceRelations = relations(teamWorkspace, ({ one }) => ({
+  user: one(users, { fields: [teamWorkspace.userId], references: [users.id] }),
+  team: one(teams, { fields: [teamWorkspace.teamId], references: [teams.id] }),
 }));
 
 export const sectionsRelations = relations(sections, ({ one, many }) => ({
@@ -718,7 +979,9 @@ export const sectionsRelations = relations(sections, ({ one, many }) => ({
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
   project: one(projects, { fields: [tasks.projectId], references: [projects.id] }),
+  client: one(clients, { fields: [tasks.clientId], references: [clients.id] }),
   section: one(sections, { fields: [tasks.sectionId], references: [sections.id] }),
+  customStatus: one(projectStatuses, { fields: [tasks.statusId], references: [projectStatuses.id] }),
   assignee: one(users, { fields: [tasks.assigneeId], references: [users.id], relationName: "assignee" }),
   createdBy: one(users, { fields: [tasks.createdById], references: [users.id], relationName: "creator" }),
   comments: many(taskComments),
@@ -973,4 +1236,26 @@ export const marketingAuditLogRelations = relations(marketingAuditLog, ({ one })
 
 export const globalSettingsRelations = relations(globalSettings, ({ one }) => ({
   user: one(users, { fields: [globalSettings.userId], references: [users.id] }),
+}));
+
+export const projectStatusesRelations = relations(projectStatuses, ({ one, many }) => ({
+  project: one(projects, { fields: [projectStatuses.projectId], references: [projects.id] }),
+  tasks: many(tasks),
+}));
+
+export const workflowChainsRelations = relations(workflowChains, ({ one, many }) => ({
+  project: one(projects, { fields: [workflowChains.projectId], references: [projects.id] }),
+  createdBy: one(users, { fields: [workflowChains.createdById], references: [users.id] }),
+  steps: many(workflowChainSteps),
+  runs: many(workflowChainRuns),
+}));
+
+export const workflowChainStepsRelations = relations(workflowChainSteps, ({ one }) => ({
+  chain: one(workflowChains, { fields: [workflowChainSteps.chainId], references: [workflowChains.id] }),
+  assignee: one(users, { fields: [workflowChainSteps.assigneeId], references: [users.id] }),
+}));
+
+export const workflowChainRunsRelations = relations(workflowChainRuns, ({ one }) => ({
+  chain: one(workflowChains, { fields: [workflowChainRuns.chainId], references: [workflowChains.id] }),
+  currentStep: one(workflowChainSteps, { fields: [workflowChainRuns.currentStepId], references: [workflowChainSteps.id] }),
 }));

@@ -5,25 +5,25 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&>svg]:pointer-events-none [&>svg]:size-3!",
+  "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&>svg]:pointer-events-none [&>svg]:size-3!",
   {
     variants: {
       variant: {
         default:
-          "bg-indigo-400/15 text-indigo-200 border-indigo-400/20 [a]:hover:bg-indigo-400/25",
+          "bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800",
         secondary:
-          "bg-white/[0.06] text-white/80 border-white/[0.08] [a]:hover:bg-white/[0.1]",
+          "bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-white/10",
         destructive:
-          "bg-red-400/10 text-red-300 border-red-400/20 focus-visible:ring-red-400/20 [a]:hover:bg-red-400/20",
+          "bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 border-red-200 dark:border-red-900",
         success:
-          "bg-emerald-400/10 text-emerald-300 border-emerald-400/20 [a]:hover:bg-emerald-400/20",
+          "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-900",
         warning:
-          "bg-amber-400/10 text-amber-300 border-amber-400/20 [a]:hover:bg-amber-400/20",
+          "bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-900",
         outline:
-          "border-white/[0.12] text-white/80 [a]:hover:bg-white/[0.05]",
+          "bg-transparent border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400",
         ghost:
-          "text-white/60 hover:bg-white/[0.06] hover:text-white/80",
-        link: "text-indigo-300 underline-offset-4 hover:underline hover:text-indigo-200",
+          "bg-transparent border-transparent text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10",
+        link: "bg-transparent border-transparent text-indigo-600 underline-offset-4 hover:underline",
       },
     },
     defaultVariants: {

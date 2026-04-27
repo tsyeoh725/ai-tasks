@@ -33,8 +33,19 @@ import {
 } from "@/components/schedule-timeline"
 import { WeekTimeline } from "@/components/week-timeline"
 import { MonthView } from "@/components/month-view"
+import { RefreshCw, CalendarCheck, CalendarX } from "lucide-react"
 
 type ViewMode = "day" | "week" | "month"
+
+type CalendarEvent = {
+  id: string
+  title: string
+  startTime: Date | string
+  endTime: Date | string
+  isAllDay: boolean
+  location?: string | null
+  description?: string | null
+}
 
 type Task = {
   id: string
@@ -103,6 +114,11 @@ export default function SchedulePage() {
   // (so they can be excluded from the unscheduled-tasks sidebar)
   const [allScheduledTaskIds, setAllScheduledTaskIds] = useState<Set<string>>(new Set())
 
+  // Google Calendar state
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
+  const [calendarConnected, setCalendarConnected] = useState(false)
+  const [syncingCalendar, setSyncingCalendar] = useState(false)
+
   // Show toast helper
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg)
@@ -166,6 +182,44 @@ export default function SchedulePage() {
     setLoading(true)
     fetchBlocks()
   }, [fetchBlocks])
+
+  // Fetch Google Calendar events for the current date range
+  const fetchCalendarEvents = useCallback(() => {
+    let localStart: Date
+    let localEnd: Date
+    if (viewMode === "day") {
+      localStart = new Date(currentDate)
+      localStart.setHours(0, 0, 0, 0)
+      localEnd = new Date(currentDate)
+      localEnd.setHours(23, 59, 59, 999)
+    } else if (viewMode === "week") {
+      localStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+      localStart.setHours(0, 0, 0, 0)
+      localEnd = endOfWeek(currentDate, { weekStartsOn: 1 })
+      localEnd.setHours(23, 59, 59, 999)
+    } else {
+      localStart = startOfMonth(currentDate)
+      localStart.setHours(0, 0, 0, 0)
+      localEnd = endOfMonth(currentDate)
+      localEnd.setHours(23, 59, 59, 999)
+    }
+    const start = localStart.toISOString()
+    const end = localEnd.toISOString()
+    fetch(`/api/calendar/events?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.items) {
+          const events = data.items.filter((item: { type: string }) => item.type === "event")
+          setCalendarEvents(events)
+          setCalendarConnected(events.length > 0)
+        }
+      })
+      .catch(() => {})
+  }, [currentDate, viewMode])
+
+  useEffect(() => {
+    fetchCalendarEvents()
+  }, [fetchCalendarEvents])
 
   // Auto-sync on first mount: places each task on its due date
   useEffect(() => {
@@ -381,6 +435,42 @@ export default function SchedulePage() {
     }
   }
 
+  // Sync Google Calendar events
+  async function syncCalendar() {
+    setSyncingCalendar(true)
+    try {
+      const res = await fetch("/api/calendar/sync", { method: "POST" })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        // If no Google account is linked, show connect state
+        if (res.status === 401 || res.status === 400) {
+          setCalendarConnected(false)
+        }
+        showToast(data.error || "Failed to sync calendar")
+        return
+      }
+      fetchCalendarEvents()
+      showToast("Calendar synced")
+    } catch {
+      showToast("Failed to sync calendar")
+    } finally {
+      setSyncingCalendar(false)
+    }
+  }
+
+  // Connect Google Calendar
+  async function connectCalendar() {
+    try {
+      const res = await fetch("/api/calendar/connect")
+      const data = await res.json()
+      if (data?.url) {
+        window.location.href = data.url
+      }
+    } catch {
+      showToast("Failed to connect Google Calendar")
+    }
+  }
+
   // Sort unscheduled tasks by priority
   const priorityOrder: Record<string, number> = {
     urgent: 0,
@@ -407,6 +497,42 @@ export default function SchedulePage() {
       {toastMessage && (
         <div className="fixed top-4 right-4 z-50 rounded-lg bg-foreground text-background px-4 py-2 text-sm shadow-lg animate-in fade-in slide-in-from-top-2">
           {toastMessage}
+        </div>
+      )}
+
+      {/* Google Calendar banner */}
+      {!calendarConnected ? (
+        <div className="flex items-center justify-between bg-blue-50 border-b border-blue-200 px-6 py-3">
+          <div className="flex items-center gap-2 text-sm text-blue-800">
+            <CalendarX className="h-4 w-4 text-blue-500 shrink-0" />
+            <span>Connect Google Calendar to see your schedule</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-blue-300 text-blue-700 hover:bg-blue-100"
+            onClick={connectCalendar}
+          >
+            Connect
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between bg-green-50 border-b border-green-200 px-6 py-2">
+          <div className="flex items-center gap-2 text-sm text-green-800">
+            <CalendarCheck className="h-4 w-4 text-green-600 shrink-0" />
+            <span className="font-medium">Synced</span>
+            <span className="text-green-600 text-xs">({calendarEvents.length} event{calendarEvents.length === 1 ? "" : "s"})</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-green-300 text-green-700 hover:bg-green-100 gap-1.5"
+            onClick={syncCalendar}
+            disabled={syncingCalendar}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", syncingCalendar && "animate-spin")} />
+            {syncingCalendar ? "Syncing..." : "Sync now"}
+          </Button>
         </div>
       )}
 
@@ -583,10 +709,18 @@ export default function SchedulePage() {
         {/* Timeline area */}
         <div className="flex-1 overflow-auto p-6">
           {/* Action buttons */}
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-xs text-muted-foreground">
-              Your time-blocked schedule. Tasks with due dates are auto-placed in your free time slots. Drag and drop not yet supported {"\u2014"} use task detail to change dates.
-            </p>
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <p className="text-xs text-muted-foreground">
+                Your time-blocked schedule. Tasks with due dates are auto-placed in your free time slots.
+              </p>
+              <div className="inline-flex items-center gap-1.5 self-start text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 font-medium">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Drag-and-drop coming soon — use the task detail to change dates
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               <Button
                 variant="ghost"
@@ -609,6 +743,16 @@ export default function SchedulePage() {
               </Button>
               <Button variant="outline" size="sm" onClick={pushToCalendar}>
                 Push to Calendar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={syncCalendar}
+                disabled={syncingCalendar}
+                className="gap-1.5"
+              >
+                <RefreshCw className={cn("h-3.5 w-3.5", syncingCalendar && "animate-spin")} />
+                {syncingCalendar ? "Syncing..." : "Sync Calendar"}
               </Button>
             </div>
           </div>
@@ -679,6 +823,57 @@ export default function SchedulePage() {
                       setViewMode("day")
                     }}
                   />
+                )}
+
+                {/* Google Calendar events — day/week: list below timeline; month: skipped (inline below) */}
+                {calendarEvents.length > 0 && viewMode !== "month" && (
+                  <div className="mt-4 border-t pt-4">
+                    <p className="text-xs font-medium text-blue-700 mb-2 flex items-center gap-1.5">
+                      <CalendarCheck className="h-3.5 w-3.5" />
+                      Google Calendar Events
+                    </p>
+                    <div className="space-y-1.5">
+                      {calendarEvents.map((event) => (
+                        <div
+                          key={event.id}
+                          className="flex items-start gap-2 rounded-md bg-blue-100 border-l-4 border-l-blue-500 text-blue-800 px-3 py-2"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">{event.title}</p>
+                            <p className="text-[10px] text-blue-600 mt-0.5">
+                              {event.isAllDay
+                                ? "All day"
+                                : `${format(new Date(event.startTime), "h:mm a")} \u2013 ${format(new Date(event.endTime), "h:mm a")}`}
+                              {event.location ? ` \u00b7 ${event.location}` : ""}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Month view: show calendar events as pills grouped by date */}
+                {calendarEvents.length > 0 && viewMode === "month" && (
+                  <div className="mt-4 border-t pt-4">
+                    <p className="text-xs font-medium text-blue-700 mb-2 flex items-center gap-1.5">
+                      <CalendarCheck className="h-3.5 w-3.5" />
+                      Google Calendar Events
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {calendarEvents.map((event) => (
+                        <span
+                          key={event.id}
+                          className="inline-flex items-center gap-1 rounded-full bg-blue-100 border border-blue-300 text-blue-800 px-2.5 py-0.5 text-xs"
+                          title={`${format(new Date(event.startTime), "MMM d")}${event.isAllDay ? " (all day)" : ` ${format(new Date(event.startTime), "h:mm a")}`}`}
+                        >
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                          <span className="font-medium">{format(new Date(event.startTime), "MMM d")}</span>
+                          <span className="truncate max-w-[120px]">{event.title}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>

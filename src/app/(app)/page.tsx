@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { JarvisOverview } from "@/components/jarvis-overview";
 
 type Task = {
   id: string;
@@ -31,8 +32,11 @@ type Task = {
   dueDate: string | null;
   completedAt: string | null;
   createdAt: string | null;
+  projectId: string;
   projectName: string;
   projectColor: string;
+  clientId: string | null;
+  clientName: string | null;
   assignee: { name: string } | null;
 };
 
@@ -216,16 +220,60 @@ export default function DashboardPage() {
   }, [data?.allTasks]);
 
   const stats = useMemo(() => {
-    if (!data) return { total: 0, completed: 0, overdue: 0, completionRate: 0, inProgress: 0 };
+    if (!data) return { total: 0, completed: 0, overdue: 0, completionRate: 0, inProgress: 0, active: 0 };
     const total = data.stats.totalTasks;
     const completed = data.allTasks.filter((t) => t.status === "done").length;
     const inProgress = data.allTasks.filter((t) => t.status === "in_progress").length;
+    // "active" = anything not done (todo, in_progress, blocked) — what users expect from "X active"
+    const active = data.allTasks.filter((t) => t.status !== "done").length;
     const overdue = data.allTasks.filter((t) => {
       if (t.status === "done" || !t.dueDate) return false;
       return isAfter(new Date(), parseISO(t.dueDate));
     }).length;
     const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
-    return { total, completed, overdue, completionRate, inProgress };
+    return { total, completed, overdue, completionRate, inProgress, active };
+  }, [data]);
+
+  // Client deadlines — next deliverable per client in the next 14 days (or overdue)
+  const clientDeadlines = useMemo(() => {
+    if (!data) return [];
+    const now = new Date();
+    const horizon = new Date(now.getTime() + 14 * 86_400_000);
+    type Deadline = {
+      clientId: string | null;
+      clientName: string;
+      taskId: string;
+      projectId: string;
+      taskTitle: string;
+      dueDate: Date;
+      daysRemaining: number;
+    };
+    const candidates: Deadline[] = data.allTasks
+      .filter((t) => t.status !== "done" && t.dueDate && t.clientName)
+      .map((t) => {
+        const due = parseISO(t.dueDate!);
+        const days = Math.ceil((due.getTime() - now.getTime()) / 86_400_000);
+        return {
+          clientId: t.clientId,
+          clientName: t.clientName!,
+          taskId: t.id,
+          projectId: t.projectId,
+          taskTitle: t.title,
+          dueDate: due,
+          daysRemaining: days,
+        };
+      })
+      .filter((d) => d.dueDate <= horizon || d.daysRemaining < 0);
+
+    // Group by client → take the soonest task per client
+    const byClient = new Map<string, Deadline>();
+    for (const d of candidates) {
+      const existing = byClient.get(d.clientName);
+      if (!existing || d.dueDate < existing.dueDate) byClient.set(d.clientName, d);
+    }
+
+    // Sort by urgency (most urgent first)
+    return Array.from(byClient.values()).sort((a, b) => a.dueDate.getTime() - b.dueDate.getTime());
   }, [data]);
 
   async function toggleTaskStatus(task: Task) {
@@ -293,6 +341,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* ── Jarvis AI overview ── */}
+        <div className="mb-6">
+          <JarvisOverview />
+        </div>
+
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {[1, 2, 3, 4].map((i) => (
@@ -306,51 +359,8 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            {/* Summary Stats Row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <Card size="sm" className="hover:shadow-md transition-shadow">
-                <CardContent className="pt-0">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Tasks</p>
-                  <p className="text-3xl font-bold mt-1">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {data?.projects.length || 0} project{data?.projects.length !== 1 ? "s" : ""}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card size="sm" className="hover:shadow-md transition-shadow">
-                <CardContent className="pt-0">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Completed</p>
-                  <p className="text-3xl font-bold mt-1 text-green-500">{stats.completed}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{data?.stats.completedThisWeek} this week</p>
-                </CardContent>
-              </Card>
-              <Card
-                size="sm"
-                className={cn("hover:shadow-md transition-shadow", stats.overdue > 0 && "border-red-500/30")}
-              >
-                <CardContent className="pt-0">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Overdue</p>
-                  <p className={cn("text-3xl font-bold mt-1", stats.overdue > 0 ? "text-red-500" : "text-muted-foreground")}>
-                    {stats.overdue}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {stats.overdue > 0 ? "needs attention" : "all clear"}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card size="sm" className="hover:shadow-md transition-shadow">
-                <CardContent className="pt-0">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Completion Rate</p>
-                  <p className="text-3xl font-bold mt-1">{stats.completionRate}%</p>
-                  <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full transition-all"
-                      style={{ width: `${stats.completionRate}%` }}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+            {/* Client Deadlines Row — agency-first metric, replaces generic stat cards */}
+            <ClientDeadlinesRow deadlines={clientDeadlines} router={router} />
 
             {/* Main Grid: Tasks (left, wider) + Today's Schedule (right) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
@@ -519,9 +529,8 @@ export default function DashboardPage() {
               </Card>
             </div>
 
-            {/* Charts Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              {/* Tasks by Status */}
+            {/* Tasks by Status — single chart, no longer in a 3-col grid */}
+            <div className="grid grid-cols-1 mb-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-sm">Tasks by status</CardTitle>
@@ -563,60 +572,6 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
 
-              {/* Tasks by Priority */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Tasks by priority</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {priorityData.length === 0 ? (
-                    <p className="py-12 text-center text-sm text-muted-foreground">No tasks yet</p>
-                  ) : (
-                    <div className="h-52">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={priorityData}>
-                          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                          <XAxis dataKey="name" fontSize={11} />
-                          <YAxis allowDecimals={false} fontSize={11} />
-                          <Tooltip />
-                          <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                            {priorityData.map((entry, index) => (
-                              <Cell key={index} fill={entry.fill} />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Completion Trend */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm">Completion trend (14d)</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-52">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={completionTrend}>
-                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                        <XAxis dataKey="date" fontSize={11} interval="preserveStartEnd" tickCount={4} />
-                        <YAxis allowDecimals={false} fontSize={11} />
-                        <Tooltip />
-                        <Line
-                          type="monotone"
-                          dataKey="count"
-                          stroke="#22c55e"
-                          strokeWidth={2}
-                          dot={false}
-                          name="Completed"
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
 
             {/* Projects + Activity */}
@@ -775,4 +730,108 @@ function actionPhrase(a: ActivityEntry): string {
     default:
       return "updated";
   }
+}
+
+// ─── Client Deadlines Row ────────────────────────────────────────────────────
+
+type ClientDeadline = {
+  clientId: string | null;
+  clientName: string;
+  taskId: string;
+  projectId: string;
+  taskTitle: string;
+  dueDate: Date;
+  daysRemaining: number;
+};
+
+function ClientDeadlinesRow({
+  deadlines,
+  router,
+}: {
+  deadlines: ClientDeadline[];
+  router: ReturnType<typeof useRouter>;
+}) {
+  if (deadlines.length === 0) {
+    return (
+      <div className="mb-6">
+        <Card className="border-l-4 border-l-green-500 bg-green-50/40 dark:bg-green-500/5">
+          <CardContent className="py-4 flex items-center gap-3">
+            <div className="h-9 w-9 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+              <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">All clear</p>
+              <p className="text-xs text-gray-500">No upcoming client deadlines in the next 14 days.</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xs uppercase tracking-wider text-gray-500 font-bold">Client Deadlines</h2>
+        <span className="text-[11px] text-gray-400">{deadlines.length} client{deadlines.length !== 1 ? "s" : ""} · next 14 days</span>
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x snap-mandatory">
+        {deadlines.map((d) => {
+          // Color coding by urgency
+          const urgency =
+            d.daysRemaining < 0 ? "overdue"
+            : d.daysRemaining === 0 ? "today"
+            : d.daysRemaining <= 1 ? "today"
+            : d.daysRemaining <= 4 ? "soon"
+            : "ok";
+          const accent = {
+            overdue: "border-l-red-500 bg-red-50/30 dark:bg-red-500/5",
+            today: "border-l-red-500 bg-red-50/30 dark:bg-red-500/5",
+            soon: "border-l-amber-500 bg-amber-50/30 dark:bg-amber-500/5",
+            ok: "border-l-green-500 bg-green-50/30 dark:bg-green-500/5",
+          }[urgency];
+          const dueLabel =
+            d.daysRemaining < 0 ? `${Math.abs(d.daysRemaining)}d overdue`
+            : d.daysRemaining === 0 ? "Today"
+            : d.daysRemaining === 1 ? "Tomorrow"
+            : `${d.daysRemaining}d left`;
+          const dueColor = {
+            overdue: "text-red-600",
+            today: "text-red-600",
+            soon: "text-amber-700",
+            ok: "text-green-700",
+          }[urgency];
+
+          return (
+            <button
+              key={d.taskId}
+              type="button"
+              onClick={() => router.push(`/projects/${d.projectId}`)}
+              className={cn(
+                "snap-start shrink-0 w-64 text-left rounded-xl border border-gray-200 dark:border-white/10 border-l-4 px-4 py-3 hover:shadow-md transition-all bg-white dark:bg-white/[0.03]",
+                accent,
+              )}
+            >
+              <p className="text-[10px] uppercase tracking-wider text-gray-500 font-bold truncate mb-0.5">
+                {d.clientName}
+              </p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate leading-tight mb-2">
+                {d.taskTitle}
+              </p>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-gray-500">
+                  {format(d.dueDate, "MMM d")}
+                </span>
+                <span className={cn("font-bold tabular-nums", dueColor)}>
+                  {dueLabel}
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

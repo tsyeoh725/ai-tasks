@@ -101,6 +101,25 @@ export function NotificationBell() {
     return `${days}d ago`;
   }
 
+  // Group by Today / Yesterday / Earlier
+  function groupNotifications(items: Notification[]) {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const yesterdayStart = todayStart - 86_400_000;
+    const groups: { label: string; items: Notification[] }[] = [
+      { label: "Today", items: [] },
+      { label: "Yesterday", items: [] },
+      { label: "Earlier", items: [] },
+    ];
+    for (const n of items) {
+      const t = new Date(n.createdAt).getTime();
+      if (t >= todayStart) groups[0].items.push(n);
+      else if (t >= yesterdayStart) groups[1].items.push(n);
+      else groups[2].items.push(n);
+    }
+    return groups.filter((g) => g.items.length > 0);
+  }
+
   return (
     <div ref={dropdownRef} className="relative">
       <button
@@ -125,7 +144,7 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-popover border rounded-lg shadow-xl z-50 max-h-[60vh] overflow-hidden flex flex-col">
+        <div className="absolute right-0 top-full mt-2 w-[380px] bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-[60vh] overflow-hidden flex flex-col">
           <div className="flex items-center justify-between px-4 py-2.5 border-b">
             <h3 className="font-semibold text-sm">Notifications</h3>
             {unreadCount > 0 && (
@@ -139,37 +158,53 @@ export function NotificationBell() {
             )}
           </div>
 
-          <div className="overflow-y-auto flex-1">
+          <div className="overflow-y-auto flex-1 max-h-[400px]">
             {notifications.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No notifications yet
-              </p>
+              <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+                <div className="h-10 w-10 rounded-full bg-[#99ff33]/15 flex items-center justify-center mb-2">
+                  <svg className="h-5 w-5 text-[#2d5200]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <p className="text-sm font-semibold text-gray-700">You're all caught up</p>
+                <p className="text-xs text-gray-400 mt-0.5">No new notifications</p>
+              </div>
             ) : (
-              notifications.map((notif) => (
-                <button
-                  key={notif.id}
-                  onClick={() => handleClick(notif)}
-                  className={cn(
-                    "w-full text-left px-4 py-3 border-b last:border-0 hover:bg-accent/50 transition-colors flex gap-3",
-                    !notif.read && "bg-primary/5"
-                  )}
-                  type="button"
-                >
-                  <span className="text-base mt-0.5 flex-shrink-0">
-                    {typeIcons[notif.type] || "\u{1F514}"}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className={cn("text-sm truncate", !notif.read && "font-medium")}>
-                      {notif.title}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {timeAgo(notif.createdAt)}
-                    </p>
-                  </div>
-                  {!notif.read && (
-                    <span className="h-2 w-2 rounded-full bg-primary flex-shrink-0 mt-2" />
-                  )}
-                </button>
+              groupNotifications(notifications).map((group) => (
+                <div key={group.label}>
+                  <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold px-4 pt-2 pb-1 bg-gray-50/60">
+                    {group.label}
+                  </p>
+                  {group.items.map((notif) => (
+                    <button
+                      key={notif.id}
+                      onClick={() => handleClick(notif)}
+                      className={cn(
+                        "w-full text-left px-4 py-3 border-b last:border-0 hover:bg-accent/50 transition-colors flex gap-3",
+                        !notif.read && "bg-[#99ff33]/5"
+                      )}
+                      type="button"
+                    >
+                      <span className="text-base mt-0.5 flex-shrink-0">
+                        {typeIcons[notif.type] || "\u{1F514}"}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={cn("text-sm truncate", !notif.read && "font-medium")}>
+                          {notif.title}
+                        </p>
+                        {notif.message && (
+                          <p className="text-[11px] text-gray-500 truncate mt-0.5">{notif.message}</p>
+                        )}
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {timeAgo(notif.createdAt)}
+                        </p>
+                      </div>
+                      {!notif.read && (
+                        <span className="h-2 w-2 rounded-full bg-[#99ff33] flex-shrink-0 mt-2 ring-2 ring-[#99ff33]/20" />
+                      )}
+                    </button>
+                  ))}
+                </div>
               ))
             )}
           </div>

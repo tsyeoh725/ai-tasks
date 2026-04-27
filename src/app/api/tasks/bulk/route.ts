@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { canAccessProject } from "@/lib/access";
 import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/activity";
 
@@ -18,6 +19,19 @@ export async function PATCH(req: Request) {
 
   if (!updates || typeof updates !== "object") {
     return NextResponse.json({ error: "updates object required" }, { status: 400 });
+  }
+
+  // Verify user has access to all affected tasks' projects
+  const affectedTasks = await db.query.tasks.findMany({
+    where: inArray(tasks.id, taskIds),
+    columns: { id: true, projectId: true },
+  });
+
+  const projectIds = [...new Set(affectedTasks.map((t) => t.projectId))];
+  for (const projectId of projectIds) {
+    if (!(await canAccessProject(projectId, user.id!))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -61,8 +75,16 @@ export async function DELETE(req: Request) {
 
   const doomed = await db.query.tasks.findMany({
     where: inArray(tasks.id, taskIds),
-    columns: { id: true, title: true },
+    columns: { id: true, title: true, projectId: true },
   });
+
+  // Verify user has access to all affected tasks' projects
+  const projectIds = [...new Set(doomed.map((t) => t.projectId))];
+  for (const projectId of projectIds) {
+    if (!(await canAccessProject(projectId, user.id!))) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   await db.delete(tasks).where(inArray(tasks.id, taskIds));
 

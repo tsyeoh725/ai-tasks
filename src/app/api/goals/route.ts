@@ -26,8 +26,8 @@ export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  const { title, description, type, status, teamId, parentGoalId, dueDate } =
-    await req.json();
+  const { title, description, type, status, teamId, parentGoalId, dueDate, startDate,
+    specific, measurable, achievable, relevant, timeBound } = await req.json();
 
   if (!title) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
@@ -46,7 +46,14 @@ export async function POST(req: Request) {
     ownerId: user.id,
     teamId: teamId || null,
     parentGoalId: parentGoalId || null,
+    startDate: startDate ? new Date(startDate) : null,
     dueDate: dueDate ? new Date(dueDate) : null,
+    specific: specific || null,
+    measurable: measurable || null,
+    achievable: achievable || null,
+    relevant: relevant || null,
+    timeBound: timeBound || null,
+    reminders: "[]",
     createdAt: now,
     updatedAt: now,
   });

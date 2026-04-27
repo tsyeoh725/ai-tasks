@@ -2,12 +2,14 @@ import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { canAccessProject } from "@/lib/access";
 import { NextResponse } from "next/server";
 import { logActivity, logTaskUpdates } from "@/lib/activity";
 import { notifyTaskAssigned } from "@/lib/notifications";
 import { createNextRecurrence } from "@/lib/recurrence";
 import { evaluateRules } from "@/lib/automation";
 import { autoSyncSchedule } from "@/lib/time-blocker";
+import { evaluateChainsForTask } from "@/lib/workflow-chains";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
@@ -34,6 +36,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
 
+  if (!(await canAccessProject(task.projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   return NextResponse.json(task);
 }
 
@@ -42,11 +48,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!user) return unauthorized();
 
   const { id } = await params;
-  const updates = await req.json();
+  let updates: Record<string, any>;
+  try { updates = await req.json(); }
+  catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const existing = await db.query.tasks.findFirst({ where: eq(tasks.id, id) });
   if (!existing) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
+  }
+
+  if (!(await canAccessProject(existing.projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const updateData: Record<string, unknown> = { updatedAt: new Date() };
@@ -66,15 +78,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   if (updates.sortOrder !== undefined) updateData.sortOrder = updates.sortOrder;
   if (updates.projectId !== undefined) updateData.projectId = updates.projectId;
+  if (updates.clientId !== undefined) updateData.clientId = updates.clientId || null;
   if (updates.sectionId !== undefined) updateData.sectionId = updates.sectionId || null;
   if (updates.taskType !== undefined) updateData.taskType = updates.taskType;
   if (updates.recurrenceRule !== undefined) updateData.recurrenceRule = updates.recurrenceRule ? JSON.stringify(updates.recurrenceRule) : null;
+  if (updates.statusId !== undefined) updateData.statusId = updates.statusId || null;
 
   await db.update(tasks).set(updateData).where(eq(tasks.id, id));
 
   // Handle recurrence: when a recurring task is completed, create the next instance
   if (updates.status === "done" && existing.recurrenceRule) {
     await createNextRecurrence(id);
+  }
+
+  // Advance any workflow chains waiting on this task
+  if (updates.status === "done" && existing.status !== "done") {
+    evaluateChainsForTask(id, user.id!).catch(() => {});
   }
 
   // Log activity for all changed fields
@@ -135,6 +154,11 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!existing) {
     return NextResponse.json({ error: "Task not found" }, { status: 404 });
   }
+
+  if (!(await canAccessProject(existing.projectId, user.id!))) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   await db.delete(tasks).where(eq(tasks.id, id));
   await logActivity({
     entityType: "task",
