@@ -264,7 +264,7 @@ function BriefingTab({ client, onSave }: { client: Client; onSave: (brief: strin
 
   function handleChange(v: string) {
     setValue(v);
-    clearTimeout(saveTimer.current);
+    saveTimer.current && clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       setSaving(true);
       onSave(v);
@@ -281,7 +281,7 @@ function BriefingTab({ client, onSave }: { client: Client; onSave: (brief: strin
       <textarea
         value={value}
         onChange={(e) => handleChange(e.target.value)}
-        onBlur={() => { clearTimeout(saveTimer.current); setSaving(true); onSave(value); setTimeout(() => setSaving(false), 500); }}
+        onBlur={() => { saveTimer.current && clearTimeout(saveTimer.current); setSaving(true); onSave(value); setTimeout(() => setSaving(false), 500); }}
         placeholder="Who is this client? What do they want? What are their brand guidelines, target audience, tone of voice…"
         className="w-full min-h-[400px] p-4 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99ff33]/40 resize-none leading-relaxed"
       />
@@ -429,7 +429,7 @@ function NotesTab({ client, onSave }: { client: Client; onSave: (notes: string) 
 
   function handleChange(v: string) {
     setValue(v);
-    clearTimeout(saveTimer.current);
+    saveTimer.current && clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       setSaving(true);
       onSave(v);
@@ -446,7 +446,7 @@ function NotesTab({ client, onSave }: { client: Client; onSave: (notes: string) 
       <textarea
         value={value}
         onChange={(e) => handleChange(e.target.value)}
-        onBlur={() => { clearTimeout(saveTimer.current); setSaving(true); onSave(value); setTimeout(() => setSaving(false), 500); }}
+        onBlur={() => { saveTimer.current && clearTimeout(saveTimer.current); setSaving(true); onSave(value); setTimeout(() => setSaving(false), 500); }}
         placeholder="Add meeting notes, call summaries, informal thoughts…"
         className="w-full min-h-[400px] p-4 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99ff33]/40 resize-none leading-relaxed"
       />
