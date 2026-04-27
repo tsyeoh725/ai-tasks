@@ -43,8 +43,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
-  // Save file
-  const uploadsDir = path.join(process.cwd(), "src", "uploads", "tasks");
+  // Save file (UPLOADS_DIR env in production points to /srv/ai-tasks-data/uploads)
+  const uploadsRoot = process.env.UPLOADS_DIR ?? path.join(process.cwd(), "uploads");
+  const uploadsDir = path.join(uploadsRoot, "tasks");
   await mkdir(uploadsDir, { recursive: true });
 
   const ext = path.extname(file.name);
@@ -86,9 +87,12 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
   });
 
   if (attachment) {
-    // Try to delete file
+    // Try to delete file. filePath is stored as "/uploads/tasks/<file>";
+    // strip the leading "/uploads" and join with UPLOADS_DIR.
     try {
-      await unlink(path.join(process.cwd(), "src", attachment.filePath));
+      const uploadsRoot = process.env.UPLOADS_DIR ?? path.join(process.cwd(), "uploads");
+      const rel = attachment.filePath.replace(/^\/uploads\//, "");
+      await unlink(path.join(uploadsRoot, rel));
     } catch {}
 
     await db.delete(taskAttachments).where(eq(taskAttachments.id, attachmentId));

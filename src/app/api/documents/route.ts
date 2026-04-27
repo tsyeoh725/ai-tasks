@@ -47,9 +47,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: `Unsupported file type: .${ext}` }, { status: 400 });
   }
 
-  // Save file to uploads directory
+  // Save file to uploads directory (UPLOADS_DIR env in production points
+  // to /srv/ai-tasks-data/uploads — outside the deploy dir).
   const id = uuid();
-  const uploadDir = path.join(process.cwd(), "uploads", projectId);
+  const uploadsRoot = process.env.UPLOADS_DIR ?? path.join(process.cwd(), "uploads");
+  const uploadDir = path.join(uploadsRoot, projectId);
   await mkdir(uploadDir, { recursive: true });
 
   const fileName = `${id}.${ext}`;

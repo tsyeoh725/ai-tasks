@@ -9,10 +9,9 @@ User=aitasks
 Group=aitasks
 WorkingDirectory=/srv/ai-tasks
 
-# Load secrets from the production env file. The path is a symlink that
-# resolves to /srv/ai-tasks-data/.env.production — config lives outside
-# the deploy dir so it survives wipes.
-EnvironmentFile=/srv/ai-tasks/.env.production
+# Load secrets directly from the persistent data dir. Config lives outside
+# the deploy dir so wipes/redeploys can't touch it.
+EnvironmentFile=/srv/ai-tasks-data/.env.production
 
 Environment=HOSTNAME=127.0.0.1
 Environment=NODE_ENV=production

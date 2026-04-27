@@ -101,6 +101,10 @@ API_KEY_SALT=$API_KEY_SALT
 PORT=$PORT
 NODE_ENV=production
 
+# Persistent data lives outside the deploy dir
+DB_PATH=$DATA_DIR/db/ai-tasks.db
+UPLOADS_DIR=$DATA_DIR/uploads
+
 # AI provider
 OPENAI_API_KEY=${OPENAI_API_KEY:-}
 AI_MODEL=${AI_MODEL:-gpt-4o-mini}
@@ -139,15 +143,15 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. symlinks
-bold "Wiring symlinks (data, uploads, .env.production)"
+bold "Removing any stale data/uploads/.env.production from the deploy dir"
+# We don't symlink anymore — Turbopack rejects symlinks pointing outside
+# the project root. Instead, the app reads DB_PATH/UPLOADS_DIR from env,
+# and systemd points EnvironmentFile directly at the data dir.
 sudo -u "$APP_USER" bash -c "
   cd '$APP_DIR'
   rm -rf data uploads .env.production 2>/dev/null || true
-  ln -sfn '$DATA_DIR/db'                 data
-  ln -sfn '$DATA_DIR/uploads'            uploads
-  ln -sfn '$DATA_DIR/.env.production'    .env.production
 "
-ok "symlinks point into $DATA_DIR"
+ok "deploy dir clean of persistent state"
 
 # ---------------------------------------------------------------- 6. CLI commands
 bold "Installing /usr/local/bin/aitasks-update + aitasks-backup"

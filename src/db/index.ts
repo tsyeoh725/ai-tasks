@@ -4,7 +4,9 @@ import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
 
-const dbPath = path.join(process.cwd(), "data", "ai-tasks.db");
+// Allow overriding via DB_PATH env (set in production to keep the DB
+// outside the deploy dir — see /srv/ai-tasks-data/db/ai-tasks.db).
+const dbPath = process.env.DB_PATH ?? path.join(process.cwd(), "data", "ai-tasks.db");
 
 // Ensure data directory exists
 const dataDir = path.dirname(dbPath);
