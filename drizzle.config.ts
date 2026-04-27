@@ -5,6 +5,8 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "sqlite",
   dbCredentials: {
-    url: "./data/ai-tasks.db",
+    // Same env var as src/db/index.ts. In production this points to
+    // /srv/ai-tasks-data/db/ai-tasks.db (outside the deploy dir).
+    url: process.env.DB_PATH ?? "./data/ai-tasks.db",
   },
 });

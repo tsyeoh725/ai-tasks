@@ -260,7 +260,7 @@ function ProjectsTab({ client }: { client: Client }) {
 function BriefingTab({ client, onSave }: { client: Client; onSave: (brief: string) => void }) {
   const [value, setValue] = useState(client.brief ?? "");
   const [saving, setSaving] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleChange(v: string) {
     setValue(v);
@@ -425,7 +425,7 @@ function AccountingTab({ clientId, currency, stats }: {
 function NotesTab({ client, onSave }: { client: Client; onSave: (notes: string) => void }) {
   const [value, setValue] = useState(client.notes ?? "");
   const [saving, setSaving] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function handleChange(v: string) {
     setValue(v);

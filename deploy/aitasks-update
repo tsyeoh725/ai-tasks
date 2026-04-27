@@ -41,7 +41,15 @@ bold "Installing npm dependencies"
 sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm ci --no-audit --no-fund"
 
 bold "Applying schema changes (drizzle push, additive only)"
-sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm run db:push"
+# drizzle-kit doesn't auto-load .env.production from outside the project,
+# so source it explicitly to get DB_PATH into its environment.
+sudo -u "$APP_USER" -H bash -lc "
+  cd '$APP_DIR'
+  set -a
+  [ -f '$DATA_DIR/.env.production' ] && . '$DATA_DIR/.env.production'
+  set +a
+  npm run db:push
+"
 
 bold "Building"
 sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm run build"
