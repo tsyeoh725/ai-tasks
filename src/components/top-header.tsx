@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationBell } from "@/components/notification-bell";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
+import { CreateClientDialog } from "@/components/create-client-dialog";
+import { CreateProjectDialog } from "@/components/create-project-dialog";
 import { useSidebar } from "@/components/sidebar-context";
 import {
   Dialog,
@@ -26,9 +27,11 @@ import {
   FolderOpen,
   Users,
   Target,
-  Briefcase,
+  FileText,
+  Receipt,
   Menu,
   X,
+  Plus,
 } from "lucide-react";
 
 const SHORTCUTS: Array<{ keys: string; description: string }> = [
@@ -39,10 +42,74 @@ const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: "Esc", description: "Close dialogs and menus" },
 ];
 
+const MENU_ITEMS = [
+  {
+    key: "task",
+    icon: CheckSquare,
+    label: "New Task",
+    description: "Add a task to a project",
+    color: "text-blue-500",
+    bg: "bg-blue-50 dark:bg-blue-950/40",
+  },
+  {
+    key: "project",
+    icon: FolderOpen,
+    label: "New Project",
+    description: "Start a client project",
+    color: "text-violet-500",
+    bg: "bg-violet-50 dark:bg-violet-950/40",
+  },
+  {
+    key: "client",
+    icon: Users,
+    label: "New Client",
+    description: "Add a client account",
+    color: "text-emerald-500",
+    bg: "bg-emerald-50 dark:bg-emerald-950/40",
+  },
+  {
+    key: "lead",
+    icon: Target,
+    label: "New Lead",
+    description: "Track a sales opportunity",
+    color: "text-amber-500",
+    bg: "bg-amber-50 dark:bg-amber-950/40",
+  },
+  {
+    key: "goal",
+    icon: Target,
+    label: "New Goal",
+    description: "Set an OKR or objective",
+    color: "text-rose-500",
+    bg: "bg-rose-50 dark:bg-rose-950/40",
+  },
+  {
+    key: "doc",
+    icon: FileText,
+    label: "New Doc",
+    description: "Write a document or brief",
+    color: "text-sky-500",
+    bg: "bg-sky-50 dark:bg-sky-950/40",
+  },
+  {
+    key: "invoice",
+    icon: Receipt,
+    label: "New Invoice",
+    description: "Create a client invoice",
+    color: "text-orange-500",
+    bg: "bg-orange-50 dark:bg-orange-950/40",
+  },
+] as const;
+
+type MenuKey = (typeof MENU_ITEMS)[number]["key"];
+
 export function TopHeader() {
   const router = useRouter();
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
+  const [createClientOpen, setCreateClientOpen] = useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const { open: sidebarOpen, toggle: toggleSidebar } = useSidebar();
 
   useEffect(() => {
@@ -51,10 +118,7 @@ export function TopHeader() {
     }
     window.addEventListener("command-palette:create-task", onCreateTask);
     return () =>
-      window.removeEventListener(
-        "command-palette:create-task",
-        onCreateTask,
-      );
+      window.removeEventListener("command-palette:create-task", onCreateTask);
   }, []);
 
   useEffect(() => {
@@ -74,14 +138,41 @@ export function TopHeader() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  function handleMenuSelect(key: MenuKey) {
+    setMenuOpen(false);
+    switch (key) {
+      case "task":
+        setCreateTaskOpen(true);
+        break;
+      case "project":
+        setCreateProjectOpen(true);
+        break;
+      case "client":
+        setCreateClientOpen(true);
+        break;
+      case "lead":
+        router.push("/crm?new=1");
+        break;
+      case "goal":
+        router.push("/goals?new=1");
+        break;
+      case "doc":
+        router.push("/documents/new");
+        break;
+      case "invoice":
+        router.push("/clients");
+        break;
+    }
+  }
+
   return (
     <>
-      <div className="h-12 bg-white/[0.02] backdrop-blur-xl border-b border-white/[0.08] flex items-center gap-2 px-4 shrink-0 relative z-10">
+      <div className="h-12 bg-white dark:bg-[#0d130d] border-b border-slate-200 dark:border-white/10 flex items-center gap-2 px-4 shrink-0 relative z-10 shadow-sm">
         {/* Mobile sidebar toggle */}
         <button
           type="button"
           onClick={toggleSidebar}
-          className="md:hidden h-11 w-11 -ml-2 mr-1 rounded-lg hover:bg-white/[0.06] flex items-center justify-center text-white/70 hover:text-white transition-colors"
+          className="md:hidden h-9 w-9 -ml-1 mr-1 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
           title={sidebarOpen ? "Close menu" : "Open menu"}
           aria-label={sidebarOpen ? "Close menu" : "Open menu"}
           aria-expanded={sidebarOpen}
@@ -89,54 +180,47 @@ export function TopHeader() {
           {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
 
-        {/* Logo/brand */}
-        <div className="font-semibold text-sm mr-4 bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+        {/* Logo */}
+        <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 mr-4">
           AI Tasks
         </div>
 
-        {/* Create button */}
-        <DropdownMenu>
+        {/* Create command menu */}
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger
             render={
               <Button
                 size="sm"
-                className="gap-1.5 h-8 bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-400 hover:to-pink-400 text-white border-white/10 shadow-[0_4px_20px_rgb(249_115_22/0.3)] hover:shadow-[0_4px_24px_rgb(249_115_22/0.45)]"
+                className="gap-1.5 h-8 btn-brand shadow-sm"
               />
             }
           >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2.5}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
+            <Plus className="h-4 w-4" />
             Create
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
-            <DropdownMenuItem onClick={() => setCreateTaskOpen(true)}>
-              <CheckSquare className="mr-2 h-4 w-4 text-white/50" />
-              Task
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/projects/new")}>
-              <FolderOpen className="mr-2 h-4 w-4 text-white/50" />
-              Project
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => router.push("/teams")}>
-              <Users className="mr-2 h-4 w-4 text-white/50" />
-              Team
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/goals")}>
-              <Target className="mr-2 h-4 w-4 text-white/50" />
-              Goal
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => router.push("/portfolios")}>
-              <Briefcase className="mr-2 h-4 w-4 text-white/50" />
-              Portfolio
-            </DropdownMenuItem>
+          <DropdownMenuContent align="start" className="w-64 p-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-2 py-1.5 mb-0.5">
+              Create new
+            </p>
+            {MENU_ITEMS.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => handleMenuSelect(item.key)}
+                  className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-left hover:bg-muted/60 transition-colors group"
+                >
+                  <span className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${item.bg}`}>
+                    <Icon className={`h-4 w-4 ${item.color}`} />
+                  </span>
+                  <span>
+                    <span className="block text-sm font-medium leading-tight">{item.label}</span>
+                    <span className="block text-[11px] text-muted-foreground leading-tight mt-0.5">{item.description}</span>
+                  </span>
+                </button>
+              );
+            })}
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -147,10 +231,11 @@ export function TopHeader() {
 
         {/* Right controls */}
         <div className="flex items-center gap-1 ml-auto">
+          <ThemeToggle compact />
           <NotificationBell />
           <button
             onClick={() => setShortcutsOpen(true)}
-            className="hidden md:flex h-9 w-9 rounded-lg hover:bg-white/[0.06] items-center justify-center text-white/50 hover:text-white/80 transition-colors"
+            className="hidden md:flex h-9 w-9 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 items-center justify-center text-slate-400 dark:text-slate-400 hover:text-slate-700 dark:hover:text-white transition-colors"
             title="Keyboard shortcuts (?)"
             type="button"
           >
@@ -172,6 +257,8 @@ export function TopHeader() {
       </div>
 
       <CreateTaskDialog open={createTaskOpen} onOpenChange={setCreateTaskOpen} />
+      <CreateClientDialog open={createClientOpen} onOpenChange={setCreateClientOpen} />
+      <CreateProjectDialog open={createProjectOpen} onOpenChange={setCreateProjectOpen} />
 
       <Dialog open={shortcutsOpen} onOpenChange={setShortcutsOpen}>
         <DialogContent className="max-w-md">
@@ -187,8 +274,8 @@ export function TopHeader() {
                 key={s.keys}
                 className="flex items-center justify-between text-sm py-1.5"
               >
-                <span className="text-white/70">{s.description}</span>
-                <kbd className="inline-flex items-center justify-center min-w-[2.25rem] px-2 py-0.5 rounded-md border border-white/10 bg-white/[0.04] font-mono text-xs text-white/80">
+                <span className="text-slate-600">{s.description}</span>
+                <kbd className="inline-flex items-center justify-center min-w-[2.25rem] px-2 py-0.5 rounded-md border border-slate-200 bg-slate-50 font-mono text-xs text-slate-700">
                   {s.keys}
                 </kbd>
               </div>

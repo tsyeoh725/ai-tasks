@@ -116,6 +116,25 @@ function relativeTime(iso: string | null) {
 
 // ─── New lead dialog ──────────────────────────────────────────────────────────
 
+const LEAD_SERVICES = [
+  { value: "social_media", label: "Social Media" },
+  { value: "seo", label: "SEO" },
+  { value: "paid_ads", label: "Paid Ads" },
+  { value: "branding", label: "Branding" },
+  { value: "web_design", label: "Web Design" },
+  { value: "content", label: "Content" },
+  { value: "email_marketing", label: "Email Marketing" },
+  { value: "video", label: "Video" },
+  { value: "strategy", label: "Strategy" },
+  { value: "photography", label: "Photography" },
+];
+
+const LEAD_PRIORITY = [
+  { value: "hot", label: "🔥 Hot", cls: "bg-red-50 border-red-300 text-red-700" },
+  { value: "warm", label: "☀️ Warm", cls: "bg-amber-50 border-amber-300 text-amber-700" },
+  { value: "cold", label: "❄️ Cold", cls: "bg-blue-50 border-blue-300 text-blue-700" },
+];
+
 function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -123,40 +142,62 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
   const [company, setCompany] = useState("");
   const [phone, setPhone] = useState("");
   const [source, setSource] = useState<LeadSource>("manual");
+  const [bniReferrer, setBniReferrer] = useState("");
+  const [priority, setPriority] = useState("warm");
+  const [services, setServices] = useState<string[]>([]);
   const [estimatedValue, setEstimatedValue] = useState("");
+  const [nextFollowUpAt, setNextFollowUpAt] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const { success } = useToast();
+
+  function toggleService(val: string) {
+    setServices((prev) => prev.includes(val) ? prev.filter((s) => s !== val) : [...prev, val]);
+  }
+
+  function reset() {
+    setName(""); setEmail(""); setCompany(""); setPhone(""); setBniReferrer("");
+    setPriority("warm"); setServices([]); setEstimatedValue(""); setNextFollowUpAt(""); setNotes("");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     setSaving(true);
     try {
+      const tags = [priority];
       await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name, email, company, phone, source,
+          name: name.trim(),
+          email: email.trim() || null,
+          company: company.trim() || null,
+          phone: phone.trim() || null,
+          source,
+          sourceDetail: source === "referral" && bniReferrer.trim() ? `BNI: ${bniReferrer.trim()}` : null,
+          services: JSON.stringify(services),
+          tags: JSON.stringify(tags),
           estimatedValue: estimatedValue ? Number(estimatedValue) : null,
-          notes,
+          nextFollowUpAt: nextFollowUpAt || null,
+          notes: notes.trim() || null,
         }),
       });
       success({ title: "Lead added" });
       onCreated();
       setOpen(false);
-      setName(""); setEmail(""); setCompany(""); setPhone(""); setEstimatedValue(""); setNotes("");
+      reset();
     } finally { setSaving(false); }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
       <DialogTrigger render={<Button className="btn-brand gap-1.5 h-9 px-4 shadow-none border-0" />}>
         <Plus size={15} /> New Lead
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader><DialogTitle>Add a lead</DialogTitle></DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={submit} className="space-y-3 pb-2">
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Name *</Label>
@@ -190,10 +231,67 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Est. value (USD)</Label>
-              <Input type="number" step="100" value={estimatedValue} onChange={(e) => setEstimatedValue(e.target.value)} />
+              <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Est. value (MYR)</Label>
+              <Input type="number" step="500" value={estimatedValue} onChange={(e) => setEstimatedValue(e.target.value)} />
             </div>
           </div>
+
+          {/* BNI referrer — only when source = referral */}
+          {source === "referral" && (
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">BNI Referrer Name</Label>
+              <Input value={bniReferrer} onChange={(e) => setBniReferrer(e.target.value)} placeholder="Who referred this lead?" />
+            </div>
+          )}
+
+          {/* Priority */}
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Priority</Label>
+            <div className="flex gap-2">
+              {LEAD_PRIORITY.map((p) => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setPriority(p.value)}
+                  className={`flex-1 py-1.5 rounded-lg border text-sm font-medium transition-all ${
+                    priority === p.value
+                      ? p.cls + " ring-2 ring-offset-1 ring-current/30"
+                      : "border-border text-muted-foreground hover:border-muted-foreground/50"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Service interest */}
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Service Interest</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {LEAD_SERVICES.map((s) => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => toggleService(s.value)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+                    services.includes(s.value)
+                      ? "bg-[#99ff33]/20 border-[#99ff33] text-[#2d5200] dark:text-[#99ff33]"
+                      : "border-muted-foreground/20 text-muted-foreground hover:border-muted-foreground/50"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Next follow-up */}
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Next Follow-up Date</Label>
+            <Input type="date" value={nextFollowUpAt} onChange={(e) => setNextFollowUpAt(e.target.value)} />
+          </div>
+
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Notes</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Where did this lead come from? What are they interested in?" />
