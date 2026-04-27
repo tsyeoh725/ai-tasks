@@ -4,66 +4,14 @@ on:
   push:
     branches: [main]
 
+# Self-hosted runner lives on talos as the `aitasks` user.
+# `aitasks` has NOPASSWD sudo for `/usr/local/bin/aitasks-update`,
+# so the entire deploy is one line. The script handles git pull,
+# DB backup, npm ci, drizzle push, build, restart, smoke test.
+
 jobs:
   deploy:
-    runs-on: self-hosted   # runner installed on talos as aitasks user
-
+    runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          clean: true
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - name: Install deps
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-        env:
-          NODE_ENV: production
-
-      - name: Backup database
-        run: |
-          mkdir -p /srv/ai-tasks/data
-          if [ -f /srv/ai-tasks/data/ai-tasks.db ]; then
-            STAMP=$(date +%Y%m%d-%H%M%S)
-            cp /srv/ai-tasks/data/ai-tasks.db /srv/ai-tasks/data/ai-tasks.db.bak-$STAMP
-            echo "Backed up to ai-tasks.db.bak-$STAMP"
-            # Keep only last 7 backups
-            ls -t /srv/ai-tasks/data/ai-tasks.db.bak-* 2>/dev/null | tail -n +8 | xargs rm -f || true
-          else
-            echo "No existing DB — first deploy"
-          fi
-
-      - name: Deploy files to /srv/ai-tasks
-        run: |
-          rsync -a --delete \
-            --exclude='.git' \
-            --exclude='node_modules' \
-            --exclude='data' \
-            --exclude='uploads' \
-            --exclude='.env.production' \
-            "$GITHUB_WORKSPACE/" /srv/ai-tasks/
-          rsync -a --delete "$GITHUB_WORKSPACE/node_modules/" /srv/ai-tasks/node_modules/
-
-      - name: Apply schema changes (drizzle push)
-        run: npm run db:push
-        working-directory: /srv/ai-tasks
-        env:
-          NODE_ENV: production
-
-      - name: Restart service
-        run: sudo systemctl restart ai-tasks
-
-      - name: Smoke test
-        run: |
-          sleep 5
-          STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3100/login)
-          echo "Login page returned HTTP $STATUS"
-          [ "$STATUS" = "200" ] || (echo "SMOKE TEST FAILED" && exit 1)
+      - name: Run aitasks-update
+        run: sudo /usr/local/bin/aitasks-update

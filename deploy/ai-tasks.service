@@ -9,18 +9,14 @@ User=aitasks
 Group=aitasks
 WorkingDirectory=/srv/ai-tasks
 
-# Load secrets from the production env file. EnvironmentFile is read-only;
-# edit /srv/ai-tasks/.env.production to change values, then `systemctl restart ai-tasks`.
+# Load secrets from the production env file. The path is a symlink that
+# resolves to /srv/ai-tasks-data/.env.production — config lives outside
+# the deploy dir so it survives wipes.
 EnvironmentFile=/srv/ai-tasks/.env.production
 
-# Pin a non-NEXTAUTH_URL-dependent host binding. Nginx proxies 127.0.0.1:3000.
 Environment=HOSTNAME=127.0.0.1
 Environment=NODE_ENV=production
 
-# Use the absolute path to node so PATH resolution doesn't matter.
-# If you installed Node via `nvm` for the aitasks user, this will be
-# /home/aitasks/.nvm/versions/node/v20.x/bin/node — adjust accordingly.
-# Running via `npm run start` so PORT is honored.
 ExecStart=/usr/bin/npm run start --silent
 
 Restart=on-failure
@@ -32,11 +28,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/srv/ai-tasks/data /srv/ai-tasks/uploads /srv/ai-tasks/.next
-# Allow binding to privileged ports? No — we stay on 3000.
-# CapabilityBoundingSet=
+# Both the deploy dir AND the data dir need write access (data/uploads
+# inside the deploy dir are symlinks pointing into /srv/ai-tasks-data).
+ReadWritePaths=/srv/ai-tasks /srv/ai-tasks-data
 
-# Generous memory for Node + better-sqlite3
 LimitNOFILE=65536
 
 StandardOutput=journal

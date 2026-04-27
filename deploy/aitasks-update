@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# /usr/local/bin/aitasks-update — idempotent updater for ai-tasks.
+#
+# Steps: pre-deploy snapshot → git pull → npm ci → drizzle push → build →
+#        systemctl restart → smoke test. Fails fast if anything goes wrong.
+#
+# Run with sudo (or call directly — re-execs itself with sudo if not root).
+
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-/srv/ai-tasks}"
+DATA_DIR="${DATA_DIR:-/srv/ai-tasks-data}"
+APP_USER="${APP_USER:-aitasks}"
+SERVICE="${SERVICE:-ai-tasks}"
+PORT="${PORT:-3100}"
+
+bold() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
+fail() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = "0" ] || exec sudo -E "$0" "$@"
+
+[ -d "$APP_DIR/.git" ] || fail "$APP_DIR is not a git checkout — run 'sudo bash deploy/install.sh' first"
+[ -d "$DATA_DIR" ]     || fail "$DATA_DIR missing — run 'sudo bash deploy/install.sh' first"
+
+bold "Pre-deploy DB snapshot"
+if command -v aitasks-backup >/dev/null; then
+  aitasks-backup --quick || warn "backup failed — continuing anyway"
+else
+  warn "aitasks-backup not installed — skipping pre-deploy snapshot"
+fi
+
+bold "Fetching latest code"
+sudo -u "$APP_USER" git -C "$APP_DIR" fetch --quiet origin
+sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard --quiet origin/main
+HEAD_SHA=$(sudo -u "$APP_USER" git -C "$APP_DIR" rev-parse --short HEAD)
+ok "now at $HEAD_SHA"
+
+bold "Installing npm dependencies"
+sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm ci --no-audit --no-fund"
+
+bold "Applying schema changes (drizzle push, additive only)"
+sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm run db:push"
+
+bold "Building"
+sudo -u "$APP_USER" -H bash -lc "cd '$APP_DIR' && npm run build"
+
+bold "Restarting service"
+systemctl restart "$SERVICE"
+sleep 4
+if ! systemctl is-active --quiet "$SERVICE"; then
+  journalctl -u "$SERVICE" -n 30 --no-pager >&2
+  fail "$SERVICE failed to start"
+fi
+
+bold "Smoke test"
+STATUS=000
+for _ in 1 2 3 4 5; do
+  STATUS=$(curl -sf -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/login" 2>/dev/null || echo 000)
+  [ "$STATUS" = "200" ] && break
+  sleep 2
+done
+[ "$STATUS" = "200" ] || fail "smoke test failed (HTTP $STATUS on /login)"
+
+ok "Deploy complete — $HEAD_SHA live on :$PORT"

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# /usr/local/bin/aitasks-backup — atomic SQLite snapshot to backups/<stamp>.gz
+#
+# Uses sqlite3 .backup, which is safe to run while the app is writing.
+# Defaults to verifying integrity. Pass --quick to skip the verify step
+# (used during deploys where speed matters).
+#
+# Layout:
+#   /srv/ai-tasks-data/db/ai-tasks.db        ← live DB
+#   /srv/ai-tasks-data/backups/              ← snapshots, 30-day retention
+
+set -euo pipefail
+
+DATA_DIR="${DATA_DIR:-/srv/ai-tasks-data}"
+DB_FILE="${DB_FILE:-$DATA_DIR/db/ai-tasks.db}"
+BACKUP_DIR="${BACKUP_DIR:-$DATA_DIR/backups}"
+RETENTION_DAYS="${RETENTION_DAYS:-30}"
+
+QUICK=false
+[[ "${1:-}" == "--quick" ]] && QUICK=true
+
+if [ ! -f "$DB_FILE" ]; then
+  echo "no DB at $DB_FILE — nothing to back up"
+  exit 0
+fi
+
+mkdir -p "$BACKUP_DIR"
+STAMP=$(date +%Y%m%d-%H%M%S)
+DEST="$BACKUP_DIR/ai-tasks.db.$STAMP"
+
+# Atomic snapshot via SQLite's online-backup API
+sqlite3 "$DB_FILE" ".backup '$DEST'"
+gzip -9 "$DEST"
+DEST_GZ="$DEST.gz"
+
+if ! $QUICK; then
+  TMP=$(mktemp)
+  trap "rm -f '$TMP'" EXIT
+  gunzip -c "$DEST_GZ" > "$TMP"
+  CHECK=$(sqlite3 "$TMP" "PRAGMA integrity_check;" | head -1)
+  if [ "$CHECK" != "ok" ]; then
+    echo "integrity check FAILED on $DEST_GZ: $CHECK" >&2
+    exit 1
+  fi
+fi
+
+# Retention
+find "$BACKUP_DIR" -name 'ai-tasks.db.*.gz' -mtime "+$RETENTION_DAYS" -delete 2>/dev/null || true
+
+SIZE=$(du -h "$DEST_GZ" | awk '{print $1}')
+COUNT=$(ls -1 "$BACKUP_DIR"/ai-tasks.db.*.gz 2>/dev/null | wc -l | tr -d ' ')
+echo "✓ $DEST_GZ ($SIZE) — $COUNT total backups"

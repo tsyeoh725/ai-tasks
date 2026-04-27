@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily ai-tasks DB backup at 03:00 (with random delay)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+Unit=ai-tasks-backup.service
+
+[Install]
+WantedBy=timers.target

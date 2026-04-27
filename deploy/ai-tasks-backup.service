@@ -1,0 +1,10 @@
+[Unit]
+Description=ai-tasks SQLite backup (snapshot to /srv/ai-tasks-data/backups)
+After=ai-tasks.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aitasks-backup
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-tasks-backup
