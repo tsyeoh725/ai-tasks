@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.7
+
+# ────────────────────────────────────────────────────────────
+#  ai-tasks — production Docker image
+#  Multi-stage build:
+#    1. deps    — install npm packages (incl. native better-sqlite3 build)
+#    2. builder — `next build` with standalone output
+#    3. runner  — minimal runtime image (~150 MB)
+# ────────────────────────────────────────────────────────────
+
+ARG NODE_VERSION=22-bookworm-slim
+
+# ---- 1. deps ----
+FROM node:${NODE_VERSION} AS deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
+# ---- 2. builder ----
+FROM node:${NODE_VERSION} AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+# ---- 3. runner ----
+FROM node:${NODE_VERSION} AS runner
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl tini sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3100
+ENV HOSTNAME=0.0.0.0
+ENV DB_PATH=/data/ai-tasks.db
+ENV UPLOADS_DIR=/data/uploads
+
+# Standalone Next output (server.js + minimal node_modules)
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Migration assets (drizzle-orm migrator runs from these)
+COPY --from=builder /app/drizzle ./drizzle
+COPY --from=builder /app/scripts/migrate.mjs ./scripts/migrate.mjs
+
+# Entrypoint
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Drop privileges
+RUN groupadd -g 1001 nodejs \
+    && useradd -u 1001 -g nodejs -s /bin/bash -m nextjs \
+    && chown -R nextjs:nodejs /app
+USER nextjs
+
+EXPOSE 3100
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:3100/api/auth/session > /dev/null || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+CMD ["node", "server.js"]

@@ -1,0 +1,29 @@
+# ai-tasks — production stack on the server.
+# Pulls the prebuilt image from GHCR; never builds on the server.
+#
+# Update flow:
+#   docker compose pull && docker compose up -d
+# (or just push to main — GitHub Actions does this for you)
+
+services:
+  app:
+    image: ghcr.io/tsyeoh725/ai-tasks:latest
+    container_name: ai-tasks
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"   # localhost-only; Cloudflare Tunnel forwards to here
+    env_file:
+      - .env.production
+    volumes:
+      - ./data:/data            # SQLite DB + uploads — survives image swaps
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3100/api/auth/session"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

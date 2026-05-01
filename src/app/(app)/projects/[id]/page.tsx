@@ -1,0 +1,1347 @@
+"use client";
+
+import { useEffect, useState, useCallback, useMemo, use } from "react";
+import { useRouter } from "next/navigation";
+import NextImage from "next/image";
+import { KanbanBoard } from "@/components/kanban-board";
+import { CreateTaskDialog } from "@/components/create-task-dialog";
+import { RichTextEditor } from "@/components/rich-text-editor";
+import { DocumentsPanel } from "@/components/documents-panel";
+import { CalendarView } from "@/components/calendar-view";
+import { TimelineView } from "@/components/timeline-view";
+import { DashboardCharts } from "@/components/dashboard-charts";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { ProjectCustomFieldSettings } from "@/components/custom-fields";
+import { AutomationBuilder } from "@/components/automation-builder";
+import { ProjectOverview } from "@/components/project-overview";
+import { ProjectStatusesPanel } from "@/components/project-statuses-panel";
+import { ProjectWorkflowsPanel } from "@/components/project-workflows-panel";
+import { ProjectHeaderEditable } from "@/components/project-header-editable";
+import { TaskDetailPanel } from "@/components/task-detail-panel";
+import { useToast } from "@/components/ui/toast";
+import { cn } from "@/lib/utils";
+
+type Task = {
+  id: string;
+  title: string;
+  priority: string;
+  status: string;
+  dueDate: string | null;
+  startDate?: string | null;
+  isMilestone?: boolean;
+  completedAt?: string | null;
+  createdAt: string;
+  assigneeId?: string | null;
+  assignee?: { name: string } | null;
+  subtasks?: { isDone: boolean }[];
+  sectionId?: string | null;
+  clientId?: string | null;
+  client?: { id: string; name: string; logoUrl: string | null; brandColor: string } | null;
+};
+
+type Member = {
+  userId: string;
+  name: string;
+  email: string;
+};
+
+type ProjectOption = {
+  id: string;
+  name: string;
+  color: string;
+};
+
+type FilterState = {
+  status: Set<string>;
+  priority: Set<string>;
+  assignee: Set<string>;
+  hasDueDate: boolean;
+  overdueOnly: boolean;
+};
+
+type ColumnKey = "title" | "assignee" | "dueDate" | "priority" | "status" | "project";
+
+const DEFAULT_COLUMNS: Record<ColumnKey, boolean> = {
+  title: true,
+  assignee: true,
+  dueDate: true,
+  priority: true,
+  status: true,
+  project: true,
+};
+
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  title: "Task",
+  assignee: "Assignee",
+  dueDate: "Due",
+  priority: "Priority",
+  status: "Status",
+  project: "Project",
+};
+
+function emptyFilters(): FilterState {
+  return {
+    status: new Set(),
+    priority: new Set(),
+    assignee: new Set(),
+    hasDueDate: false,
+    overdueOnly: false,
+  };
+}
+
+function countFilters(f: FilterState): number {
+  return (
+    f.status.size +
+    f.priority.size +
+    f.assignee.size +
+    (f.hasDueDate ? 1 : 0) +
+    (f.overdueOnly ? 1 : 0)
+  );
+}
+
+type Section = {
+  id: string;
+  name: string;
+  sortOrder: number;
+};
+
+type Project = {
+  id: string;
+  name: string;
+  color: string;
+  icon: string | null;
+  category: string | null;   // client
+  campaign: string | null;
+  description: string | null;
+  teamId: string | null;
+};
+
+type ActiveTab = "overview" | "board" | "list" | "calendar" | "timeline" | "dashboard" | "workspace" | "fields" | "automations" | "statuses" | "workflows";
+
+export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
+  const router = useRouter();
+  const [project, setProject] = useState<Project | null>(null);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [sections, setSections] = useState<Section[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
+  const [sortBy, setSortBy] = useState<string>("default");
+  const [groupBy, setGroupBy] = useState<string>("client");
+  const [loading, setLoading] = useState(true);
+  const [briefContent, setBriefContent] = useState("{}");
+  const [briefLoaded, setBriefLoaded] = useState(false);
+  const [briefStatus, setBriefStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [prioritizing, setPrioritizing] = useState(false);
+  const toast = useToast();
+
+  // List toolbar state
+  const [filters, setFilters] = useState<FilterState>(() => emptyFilters());
+  const [visibleColumns, setVisibleColumns] = useState<Record<ColumnKey, boolean>>(DEFAULT_COLUMNS);
+  const [density, setDensity] = useState<"compact" | "comfortable">("comfortable");
+  const [members, setMembers] = useState<Member[]>([]);
+  const [allProjects, setAllProjects] = useState<ProjectOption[]>([]);
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    const [projRes, tasksRes, sectionsRes] = await Promise.all([
+      fetch(`/api/projects/${id}`),
+      fetch(`/api/tasks?projectId=${id}`),
+      fetch(`/api/projects/${id}/sections`),
+    ]);
+
+    if (projRes.ok) setProject(await projRes.json());
+    if (tasksRes.ok) {
+      const data = await tasksRes.json();
+      setTasks(data.tasks || []);
+    }
+    if (sectionsRes.ok) {
+      const data = await sectionsRes.json();
+      setSections(data.sections || []);
+    }
+    setLoading(false);
+  }, [id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Load brief when tab is selected
+  useEffect(() => {
+    if (activeTab === "workspace" && !briefLoaded) {
+      fetch(`/api/briefs?projectId=${id}`)
+        .then((r) => r.json())
+        .then((data) => {
+          setBriefContent(data.content || "{}");
+          setBriefLoaded(true);
+        })
+        .catch(() => setBriefLoaded(true));
+    }
+  }, [activeTab, briefLoaded, id]);
+
+  // Hydrate per-project visible columns + density from localStorage
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(`listCols:${id}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<Record<ColumnKey, boolean>>;
+        setVisibleColumns({ ...DEFAULT_COLUMNS, ...parsed });
+      }
+      const d = window.localStorage.getItem(`listDensity:${id}`);
+      if (d === "compact" || d === "comfortable") setDensity(d);
+    } catch {
+      // ignore
+    }
+  }, [id]);
+
+  // Persist visible columns
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`listCols:${id}`, JSON.stringify(visibleColumns));
+    } catch {
+      // ignore
+    }
+  }, [visibleColumns, id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(`listDensity:${id}`, density);
+    } catch {
+      // ignore
+    }
+  }, [density, id]);
+
+  // Load project members (for assignee filter + quick assignee change)
+  useEffect(() => {
+    if (!project?.teamId) {
+      setMembers([]);
+      return;
+    }
+    fetch(`/api/teams/${project.teamId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const ms = (data.members || []).map(
+          (m: { userId: string; user?: { name: string; email: string } }) => ({
+            userId: m.userId,
+            name: m.user?.name || "Unknown",
+            email: m.user?.email || "",
+          })
+        );
+        setMembers(ms);
+      })
+      .catch(() => {});
+  }, [project?.teamId]);
+
+  // Load all projects for bulk project mover
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => setAllProjects(data.projects || []))
+      .catch(() => {});
+  }, []);
+
+  async function handleTaskMove(taskId: string, newStatus: string, index: number) {
+    // Capture original status for rollback
+    const original = tasks.find((t) => t.id === taskId);
+    if (!original) return;
+    const originalStatus = original.status;
+
+    // Optimistic
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, sortOrder: index * 1000 }),
+      });
+      if (!res.ok) throw new Error("API rejected");
+    } catch {
+      // Rollback
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: originalStatus } : t)));
+      toast.error({ title: "Couldn't move task", description: "Reverted to original column. Check your connection." });
+    }
+  }
+
+  async function handleTaskSectionMove(taskId: string, newSectionId: string, index: number) {
+    // The Backlog column uses droppableId "__backlog__" — translate to null for the API
+    const finalSectionId = newSectionId === "__backlog__" ? null : newSectionId;
+
+    const original = tasks.find((t) => t.id === taskId);
+    if (!original) return;
+    const originalSectionId = original.sectionId ?? null;
+
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, sectionId: finalSectionId } : t)));
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sectionId: finalSectionId, sortOrder: index * 1000 }),
+      });
+      if (!res.ok) throw new Error("API rejected");
+    } catch {
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, sectionId: originalSectionId } : t)));
+      toast.error({ title: "Couldn't move task", description: "Reverted to original column. Check your connection." });
+    }
+  }
+
+  async function handleBriefChange(content: string) {
+    setBriefContent(content);
+    setBriefStatus("saving");
+    try {
+      const res = await fetch("/api/briefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: id, content: JSON.parse(content) }),
+      });
+      setBriefStatus(res.ok ? "saved" : "error");
+    } catch {
+      setBriefStatus("error");
+    }
+  }
+
+  async function handleAiPrioritize() {
+    if (prioritizing) return;
+    setPrioritizing(true);
+    try {
+      const res = await fetch("/api/ai/prioritize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error({
+          title: "Couldn't prioritize tasks",
+          description: data?.error || "Try again in a moment.",
+        });
+        return;
+      }
+      if (data?.message) {
+        toast.info(data.message);
+        return;
+      }
+      const count = Array.isArray(data?.rankings) ? data.rankings.length : 0;
+      const unschedulable = data?.scheduleContext?.unschedulableTasks ?? 0;
+      toast.success({
+        title: `Ranked ${count} task${count === 1 ? "" : "s"}`,
+        description:
+          unschedulable > 0
+            ? `${unschedulable} may not fit before their deadline.`
+            : undefined,
+      });
+      fetchData();
+    } catch {
+      toast.error("Couldn't prioritize tasks");
+    } finally {
+      setPrioritizing(false);
+    }
+  }
+
+  // Apply filters to tasks
+  const filteredTasks = useMemo(() => {
+    const now = Date.now();
+    return tasks.filter((t) => {
+      if (filters.status.size > 0 && !filters.status.has(t.status)) return false;
+      if (filters.priority.size > 0 && !filters.priority.has(t.priority)) return false;
+      if (filters.assignee.size > 0) {
+        const aid = t.assigneeId || "";
+        if (!filters.assignee.has(aid)) return false;
+      }
+      if (filters.hasDueDate && !t.dueDate) return false;
+      if (filters.overdueOnly) {
+        if (!t.dueDate) return false;
+        if (t.status === "done") return false;
+        if (new Date(t.dueDate).getTime() >= now) return false;
+      }
+      return true;
+    });
+  }, [tasks, filters]);
+
+  const activeFilterCount = countFilters(filters);
+
+  function toggleFilterMember(key: "status" | "priority" | "assignee", value: string) {
+    setFilters((prev) => {
+      const next = new Set(prev[key]);
+      if (next.has(value)) next.delete(value);
+      else next.add(value);
+      return { ...prev, [key]: next };
+    });
+  }
+
+  function resetFilters() {
+    setFilters(emptyFilters());
+  }
+
+  function toggleColumn(key: ColumnKey) {
+    setVisibleColumns((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function csvEscape(val: string): string {
+    if (val === null || val === undefined) return "";
+    const s = String(val);
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  function exportCsv() {
+    // Full canonical export format. Columns match the import schema so an
+    // exported file round-trips through import-csv.
+    const headers = [
+      "Title",
+      "Status",
+      "Priority",
+      "Assignee",
+      "Assignee Email",
+      "Due Date",
+      "Labels",
+      "Description",
+    ];
+
+    const rows = filteredTasks.map((t) => {
+      const email = members.find((m) => m.userId === t.assigneeId)?.email || "";
+      const due = t.dueDate
+        ? new Date(t.dueDate).toISOString().slice(0, 10)
+        : "";
+      return [
+        t.title,
+        t.status,
+        t.priority,
+        t.assignee?.name || "",
+        email,
+        due,
+        "", // Labels: not loaded in the list view yet; column kept for round-trip.
+        "", // Description: not loaded in the list view; kept for round-trip.
+      ]
+        .map(csvEscape)
+        .join(",");
+    });
+
+    const csv = [headers.join(","), ...rows].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${project?.name || "tasks"}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  // Bulk selection helpers
+  function toggleSelect(taskId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  async function bulkPatch(body: Record<string, unknown>) {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedIds);
+      await Promise.all(
+        ids.map((tid) =>
+          fetch(`/api/tasks/${tid}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+        )
+      );
+      await fetchData();
+      clearSelection();
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    setBulkBusy(true);
+    try {
+      const ids = Array.from(selectedIds);
+      await Promise.all(
+        ids.map((tid) => fetch(`/api/tasks/${tid}`, { method: "DELETE" }))
+      );
+      await fetchData();
+      clearSelection();
+      setConfirmDelete(false);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-muted-foreground">Project not found</p>
+      </div>
+    );
+  }
+
+  const tabs: { id: ActiveTab; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "board", label: "Board" },
+    { id: "list", label: "List" },
+    { id: "calendar", label: "Calendar" },
+    { id: "timeline", label: "Timeline" },
+    { id: "dashboard", label: "Insights" },
+    { id: "workspace", label: "Workspace" },
+    { id: "fields", label: "Fields" },
+    { id: "automations", label: "Automations" },
+    { id: "statuses", label: "Statuses" },
+    { id: "workflows", label: "Workflows" },
+  ];
+
+  const taskTabsForAi = ["board", "list", "calendar", "timeline"] as ActiveTab[];
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header Row 1: project identity + actions */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b bg-white">
+        <ProjectHeaderEditable
+          project={project}
+          onUpdate={(patch) => setProject({ ...project, ...patch })}
+        />
+        <span className="text-[11px] text-gray-500 shrink-0 bg-gray-100 px-2 py-0.5 rounded-full font-medium">
+          {tasks.length} {tasks.length === 1 ? "task" : "tasks"}
+        </span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAiPrioritize}
+            disabled={prioritizing || !taskTabsForAi.includes(activeTab)}
+            className="shrink-0"
+          >
+            <svg className={cn("h-4 w-4 mr-1", prioritizing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            <span className="hidden sm:inline">{prioritizing ? "Prioritizing…" : "AI Prioritize"}</span>
+            <span className="sm:hidden">{prioritizing ? "…" : "AI"}</span>
+          </Button>
+          <div className="shrink-0">
+            <CreateTaskDialog projectId={project.id} onCreated={fetchData} />
+          </div>
+        </div>
+      </div>
+
+      {/* Header Row 2: tab strip */}
+      <div className="flex overflow-x-auto scrollbar-none border-b px-4">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors",
+              activeTab === tab.id
+                ? "border-[#99ff33] text-[#2d5200] bg-gradient-to-b from-transparent to-[#99ff33]/[0.05]"
+                : "border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto">
+        {activeTab === "overview" && <ProjectOverview project={project} />}
+
+        {activeTab === "board" && (
+          <KanbanBoard
+            tasks={tasks}
+            projectId={project.id}
+            onTaskMove={handleTaskMove}
+            onRefresh={fetchData}
+            sections={sections}
+            onTaskSectionMove={handleTaskSectionMove}
+            onTaskClick={setDetailTaskId}
+          />
+        )}
+
+        {activeTab === "list" && (() => {
+          return (
+          <div className="flex flex-col h-full">
+            {/* Toolbar */}
+            <div className="flex items-center gap-2 px-4 py-2 border-b text-sm">
+              <span className="text-muted-foreground text-xs mr-1">Sort:</span>
+              <Select value={sortBy} onValueChange={(v) => v && setSortBy(v)}>
+                <SelectTrigger className="h-7 text-xs w-auto min-w-[100px] border-0 shadow-none">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="dueDate">Due Date</SelectItem>
+                  <SelectItem value="status">Status</SelectItem>
+                </SelectContent>
+              </Select>
+              <span className="text-muted-foreground text-xs ml-2 mr-1">Group:</span>
+              <Select value={groupBy} onValueChange={(v) => v && setGroupBy(v)}>
+                <SelectTrigger className="h-7 text-xs w-auto min-w-[100px] border-0 shadow-none">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="client">Client</SelectItem>
+                  <SelectItem value="status">Status</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  {sections.length > 0 && <SelectItem value="section">Section</SelectItem>}
+                </SelectContent>
+              </Select>
+
+              {/* Right-aligned controls */}
+              <div className="ml-auto flex items-center gap-1">
+                {/* Filter */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={(props) => (
+                      <Button {...props} variant="outline" size="sm" className="h-7 text-xs">
+                        Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+                      </Button>
+                    )}
+                  />
+                  <DropdownMenuContent align="end" className="w-64">
+                    <DropdownMenuLabel>Status</DropdownMenuLabel>
+                    {(["todo", "in_progress", "done", "blocked"] as const).map((s) => (
+                      <DropdownMenuCheckboxItem
+                        key={s}
+                        checked={filters.status.has(s)}
+                        closeOnClick={false}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          toggleFilterMember("status", s);
+                        }}
+                      >
+                        {statusLabels[s]}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Priority</DropdownMenuLabel>
+                    {(["low", "medium", "high", "urgent"] as const).map((p) => (
+                      <DropdownMenuCheckboxItem
+                        key={p}
+                        checked={filters.priority.has(p)}
+                        closeOnClick={false}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          toggleFilterMember("priority", p);
+                        }}
+                      >
+                        <span className="capitalize">{p}</span>
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                    {members.length > 0 && (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel>Assignee</DropdownMenuLabel>
+                        <DropdownMenuCheckboxItem
+                          checked={filters.assignee.has("")}
+                          closeOnClick={false}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            toggleFilterMember("assignee", "");
+                          }}
+                        >
+                          Unassigned
+                        </DropdownMenuCheckboxItem>
+                        {members.map((m) => (
+                          <DropdownMenuCheckboxItem
+                            key={m.userId}
+                            checked={filters.assignee.has(m.userId)}
+                            closeOnClick={false}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              toggleFilterMember("assignee", m.userId);
+                            }}
+                          >
+                            {m.name}
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuCheckboxItem
+                      checked={filters.hasDueDate}
+                      closeOnClick={false}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFilters((p) => ({ ...p, hasDueDate: !p.hasDueDate }));
+                      }}
+                    >
+                      Has due date
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuCheckboxItem
+                      checked={filters.overdueOnly}
+                      closeOnClick={false}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setFilters((p) => ({ ...p, overdueOnly: !p.overdueOnly }));
+                      }}
+                    >
+                      Overdue only
+                    </DropdownMenuCheckboxItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.preventDefault();
+                        resetFilters();
+                      }}
+                    >
+                      Reset filters
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Fields */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={(props) => (
+                      <Button {...props} variant="outline" size="sm" className="h-7 text-xs">
+                        Fields
+                      </Button>
+                    )}
+                  />
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
+                    {(Object.keys(DEFAULT_COLUMNS) as ColumnKey[]).map((k) => (
+                      <DropdownMenuCheckboxItem
+                        key={k}
+                        checked={visibleColumns[k]}
+                        closeOnClick={false}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          toggleColumn(k);
+                        }}
+                      >
+                        {COLUMN_LABELS[k]}
+                      </DropdownMenuCheckboxItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                {/* Options */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={(props) => (
+                      <Button {...props} variant="outline" size="sm" className="h-7 text-xs">
+                        Options
+                      </Button>
+                    )}
+                  />
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuItem onClick={() => exportCsv()}>Export as CSV</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => router.push(`/projects/${id}/import`)}>
+                      Import CSV
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => fetchData()}>Refresh</DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        setDensity((d) => (d === "compact" ? "comfortable" : "compact"))
+                      }
+                    >
+                      Toggle density ({density === "compact" ? "compact" : "comfortable"})
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
+
+            {/* Notion-style list */}
+            <div className="flex-1 overflow-auto">
+              {filteredTasks.length === 0 ? (
+                <div>
+                  <p className="text-center text-muted-foreground py-12">
+                    {tasks.length === 0
+                      ? "No tasks yet. Create one to get started!"
+                      : "No tasks match the current filters."}
+                  </p>
+                  <button
+                    onClick={() => setCreateDialogOpen(true)}
+                    className="flex items-center gap-2 px-4 py-2 text-gray-400 text-sm hover:bg-gray-50 cursor-pointer w-full border-b border-gray-100"
+                  >
+                    <span className="text-base leading-none">+</span>
+                    New task
+                  </button>
+                </div>
+              ) : (
+                (() => {
+                  const sorted = [...filteredTasks];
+                  const priorityOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+                  const statusOrder: Record<string, number> = { todo: 0, in_progress: 1, blocked: 2, done: 3 };
+                  if (sortBy === "name") sorted.sort((a, b) => a.title.localeCompare(b.title));
+                  else if (sortBy === "priority") sorted.sort((a, b) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9));
+                  else if (sortBy === "dueDate") sorted.sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"));
+                  else if (sortBy === "status") sorted.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+
+                  const effectiveGroupBy = groupBy === "none" && sections.length > 0 ? "section" : groupBy;
+
+                  const statusDotColor: Record<string, string> = {
+                    todo: "bg-gray-300",
+                    in_progress: "bg-blue-500",
+                    done: "bg-green-500",
+                    blocked: "bg-red-500",
+                  };
+
+                  const priorityChipClass: Record<string, string> = {
+                    urgent: "bg-red-50 text-red-600 border border-red-200",
+                    high: "bg-orange-50 text-orange-600 border border-orange-100",
+                    medium: "bg-yellow-50 text-yellow-600 border border-yellow-100",
+                    low: "bg-gray-50 text-gray-500 border border-gray-200",
+                  };
+
+                  const renderTaskRow = (task: Task) => {
+                    const isSelected = selectedIds.has(task.id);
+                    const isDone = task.status === "done";
+                    const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && !isDone;
+                    return (
+                      <div
+                        key={task.id}
+                        className={cn(
+                          "flex items-center gap-2 px-4 py-2 hover:bg-gray-50 border-b border-gray-100 group cursor-pointer",
+                          isSelected && "bg-indigo-50"
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 shrink-0"
+                          checked={isSelected}
+                          onChange={() => toggleSelect(task.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <span
+                          className={cn(
+                            "h-2.5 w-2.5 rounded-full shrink-0",
+                            statusDotColor[task.status] || "bg-gray-300"
+                          )}
+                        />
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (e.metaKey || e.ctrlKey) {
+                              window.open(`/tasks/${task.id}`, "_blank");
+                              return;
+                            }
+                            setDetailTaskId(task.id);
+                          }}
+                          className={cn(
+                            "text-sm text-gray-900 flex-1 truncate text-left",
+                            isDone && "line-through text-gray-400"
+                          )}
+                        >
+                          {task.title}
+                        </button>
+                        {/* Right-side chips */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {task.assignee && (
+                            <div
+                              className="h-5 w-5 rounded-full bg-indigo-100 flex items-center justify-center text-[9px] font-medium text-indigo-700 shrink-0"
+                              title={task.assignee.name}
+                            >
+                              {task.assignee.name[0]?.toUpperCase()}
+                            </div>
+                          )}
+                          {task.dueDate && (
+                            <span
+                              className={cn(
+                                "text-xs shrink-0",
+                                isOverdue ? "text-red-500 font-medium" : "text-gray-400"
+                              )}
+                            >
+                              {new Date(task.dueDate).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                            </span>
+                          )}
+                          {task.priority && (
+                            <span
+                              className={cn(
+                                "text-xs px-1.5 py-0.5 rounded capitalize shrink-0",
+                                priorityChipClass[task.priority] || "bg-gray-50 text-gray-500 border border-gray-200"
+                              )}
+                            >
+                              {task.priority}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  };
+
+                  const renderSectionHeader = (label: string, count: number) => (
+                    <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      <span>{statusLabels[label] || label}</span>
+                      <span className="font-normal normal-case text-gray-400">{count}</span>
+                    </div>
+                  );
+
+                  const renderNewTaskRow = () => (
+                    <button
+                      onClick={() => setCreateDialogOpen(true)}
+                      className="flex items-center gap-2 px-4 py-2 text-gray-400 text-sm hover:bg-gray-50 cursor-pointer w-full border-b border-gray-100"
+                    >
+                      <span className="text-base leading-none">+</span>
+                      New task
+                    </button>
+                  );
+
+                  if (effectiveGroupBy === "none") {
+                    return (
+                      <div>
+                        {sorted.map(renderTaskRow)}
+                        {renderNewTaskRow()}
+                      </div>
+                    );
+                  }
+
+                  if (effectiveGroupBy === "section") {
+                    const sectionName = (sid: string | null | undefined) =>
+                      sid ? (sections.find((s) => s.id === sid)?.name || "No section") : "No section";
+
+                    const orderedSectionIds: (string | null)[] = [...sections.map((s) => s.id), null];
+                    const groups = new Map<string | null, Task[]>();
+                    for (const sid of orderedSectionIds) groups.set(sid, []);
+                    for (const t of sorted) {
+                      const key = t.sectionId && sections.some((s) => s.id === t.sectionId) ? t.sectionId : null;
+                      if (!groups.has(key)) groups.set(key, []);
+                      groups.get(key)!.push(t);
+                    }
+
+                    return (
+                      <div>
+                        {Array.from(groups.entries())
+                          .filter(([, groupTasks]) => groupTasks.length > 0)
+                          .map(([sid, groupTasks]) => (
+                            <div key={sid ?? "__none__"}>
+                              {renderSectionHeader(sectionName(sid), groupTasks.length)}
+                              {groupTasks.map(renderTaskRow)}
+                              {renderNewTaskRow()}
+                            </div>
+                          ))}
+                      </div>
+                    );
+                  }
+
+                  if (effectiveGroupBy === "client") {
+                    const groups = new Map<string, { label: string; brandColor: string; logoUrl: string | null; tasks: Task[] }>();
+                    for (const t of sorted) {
+                      const key = t.client?.id ?? "__no_client__";
+                      const label = t.client?.name ?? "No Client";
+                      if (!groups.has(key)) {
+                        groups.set(key, {
+                          label,
+                          brandColor: t.client?.brandColor ?? "#9ca3af",
+                          logoUrl: t.client?.logoUrl ?? null,
+                          tasks: [],
+                        });
+                      }
+                      groups.get(key)!.tasks.push(t);
+                    }
+
+                    // Order: clients alphabetically, "No Client" last
+                    const ordered = Array.from(groups.entries()).sort(([ak, av], [bk, bv]) => {
+                      if (ak === "__no_client__") return 1;
+                      if (bk === "__no_client__") return -1;
+                      return av.label.localeCompare(bv.label);
+                    });
+
+                    return (
+                      <div>
+                        {ordered.map(([key, g]) => (
+                          <div key={key}>
+                            <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-200">
+                              {g.logoUrl ? (
+                                <div className="relative h-4 w-4 rounded overflow-hidden shrink-0 ring-1 ring-gray-200">
+                                  <NextImage
+                                    src={g.logoUrl}
+                                    alt=""
+                                    fill
+                                    sizes="16px"
+                                    unoptimized
+                                    className="object-cover"
+                                  />
+                                </div>
+                              ) : (
+                                <span
+                                  className="h-2 w-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: g.brandColor }}
+                                />
+                              )}
+                              <span className="text-xs font-semibold text-gray-700">{g.label}</span>
+                              <span className="text-[10px] text-gray-400 bg-gray-200 px-1.5 rounded-full">{g.tasks.length}</span>
+                            </div>
+                            {g.tasks.map(renderTaskRow)}
+                            {renderNewTaskRow()}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  const groups: Record<string, Task[]> = {};
+                  for (const t of sorted) {
+                    const key = effectiveGroupBy === "status" ? t.status : t.priority;
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(t);
+                  }
+
+                  return (
+                    <div>
+                      {Object.entries(groups).map(([group, groupTasks]) => (
+                        <div key={group}>
+                          {renderSectionHeader(group, groupTasks.length)}
+                          {groupTasks.map(renderTaskRow)}
+                          {renderNewTaskRow()}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
+            </div>
+
+            {/* Controlled CreateTaskDialog for "New task" row */}
+            <CreateTaskDialog
+              projectId={project.id}
+              onCreated={() => { fetchData(); setCreateDialogOpen(false); }}
+              open={createDialogOpen}
+              onOpenChange={setCreateDialogOpen}
+            />
+          </div>
+          );
+        })()}
+
+        {activeTab === "calendar" && (
+          <div className="p-4">
+            <CalendarView
+              tasks={tasks}
+              onTaskClick={(taskId) => router.push(`/tasks/${taskId}`)}
+              onDateChange={async (taskId, newDate) => {
+                await fetch(`/api/tasks/${taskId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ dueDate: newDate }),
+                });
+                fetchData();
+              }}
+            />
+          </div>
+        )}
+
+        {activeTab === "timeline" && (
+          <div className="p-4 h-full">
+            <TimelineView
+              tasks={tasks}
+              onTaskClick={(taskId) => router.push(`/tasks/${taskId}`)}
+            />
+          </div>
+        )}
+
+        {activeTab === "dashboard" && (
+          <div className="p-6">
+            <DashboardCharts tasks={tasks} projectName={project.name} />
+          </div>
+        )}
+
+        {activeTab === "workspace" && (
+          <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
+            {/* Brief — Notion-style rich editor */}
+            <div className="rounded-2xl border border-gray-200 bg-white">
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-[#2d5200]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <h2 className="text-sm font-semibold text-gray-800">Project Brief</h2>
+                  <span
+                    className={cn(
+                      "text-xs ml-2 transition-colors",
+                      briefStatus === "error" ? "text-red-400" : "text-gray-400"
+                    )}
+                  >
+                    {briefStatus === "saving" && "Saving…"}
+                    {briefStatus === "saved" && "Saved"}
+                    {briefStatus === "error" && "Save failed"}
+                  </span>
+                </div>
+              </div>
+              <div className="p-5">
+                <RichTextEditor
+                  content={briefContent}
+                  onChange={handleBriefChange}
+                  placeholder="Write a brief, drop in headings, lists, code blocks — type / for commands"
+                />
+              </div>
+            </div>
+
+            {/* Documents (Drive + uploads) */}
+            <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
+                <svg className="w-4 h-4 text-[#2d5200]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+                <h2 className="text-sm font-semibold text-gray-800">Documents</h2>
+              </div>
+              <DocumentsPanel projectId={project.id} />
+            </div>
+          </div>
+        )}
+
+        {activeTab === "fields" && (
+          <div className="p-6 max-w-3xl mx-auto">
+            <h2 className="text-lg font-semibold mb-4">Custom Fields</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Define custom fields that appear on all tasks in this project.
+            </p>
+            <ProjectCustomFieldSettings projectId={project.id} />
+          </div>
+        )}
+
+        {activeTab === "automations" && (
+          <div className="p-6 max-w-3xl mx-auto">
+            <h2 className="text-lg font-semibold mb-4">Automations</h2>
+            <p className="text-sm text-muted-foreground mb-4">
+              Create rules to automate task workflows. When a trigger fires, actions run automatically.
+            </p>
+            <AutomationBuilder projectId={project.id} />
+          </div>
+        )}
+
+        {activeTab === "statuses" && (
+          <ProjectStatusesPanel projectId={project.id} />
+        )}
+
+        {activeTab === "workflows" && (
+          <ProjectWorkflowsPanel projectId={project.id} />
+        )}
+      </div>
+
+      {/* Bulk multi-select bar */}
+      {activeTab === "list" && selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-foreground text-background rounded-full shadow-lg px-4 py-2 flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4">
+          <span className="text-sm font-medium">{selectedIds.size} selected</span>
+          <div className="h-4 w-px bg-background/30" />
+          {/* Assignee */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(props) => (
+                <button
+                  {...props}
+                  disabled={bulkBusy}
+                  className="text-xs rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50"
+                >
+                  Assignee
+                </button>
+              )}
+            />
+            <DropdownMenuContent align="center" side="top" className="w-48">
+              <DropdownMenuItem onClick={() => bulkPatch({ assigneeId: null })}>
+                Unassign
+              </DropdownMenuItem>
+              {members.length > 0 && <DropdownMenuSeparator />}
+              {members.map((m) => (
+                <DropdownMenuItem
+                  key={m.userId}
+                  onClick={() => bulkPatch({ assigneeId: m.userId })}
+                >
+                  {m.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Priority */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(props) => (
+                <button
+                  {...props}
+                  disabled={bulkBusy}
+                  className="text-xs rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50"
+                >
+                  Priority
+                </button>
+              )}
+            />
+            <DropdownMenuContent align="center" side="top" className="w-32">
+              {(["low", "medium", "high", "urgent"] as const).map((p) => (
+                <DropdownMenuItem key={p} onClick={() => bulkPatch({ priority: p })}>
+                  <span className="capitalize">{p}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Status */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(props) => (
+                <button
+                  {...props}
+                  disabled={bulkBusy}
+                  className="text-xs rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50"
+                >
+                  Status
+                </button>
+              )}
+            />
+            <DropdownMenuContent align="center" side="top" className="w-36">
+              {(["todo", "in_progress", "done", "blocked"] as const).map((s) => (
+                <DropdownMenuItem key={s} onClick={() => bulkPatch({ status: s })}>
+                  {statusLabels[s]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Move (section/project) */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={(props) => (
+                <button
+                  {...props}
+                  disabled={bulkBusy}
+                  className="text-xs rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50"
+                >
+                  Move
+                </button>
+              )}
+            />
+            <DropdownMenuContent align="center" side="top" className="w-56">
+              {sections.length > 0 && (
+                <>
+                  <DropdownMenuLabel>Section in this project</DropdownMenuLabel>
+                  <DropdownMenuItem onClick={() => bulkPatch({ sectionId: null })}>
+                    No section
+                  </DropdownMenuItem>
+                  {sections.map((s) => (
+                    <DropdownMenuItem key={s.id} onClick={() => bulkPatch({ sectionId: s.id })}>
+                      {s.name}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuLabel>Move to project</DropdownMenuLabel>
+              {allProjects
+                .filter((p) => p.id !== project.id)
+                .map((p) => (
+                  <DropdownMenuItem
+                    key={p.id}
+                    onClick={() => bulkPatch({ projectId: p.id, sectionId: null })}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: p.color }}
+                      />
+                      {p.name}
+                    </span>
+                  </DropdownMenuItem>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Delete */}
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={bulkBusy}
+            className="text-xs rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50 text-red-300"
+          >
+            Delete
+          </button>
+          <div className="h-4 w-px bg-background/30" />
+          {/* Clear */}
+          <button
+            onClick={clearSelection}
+            disabled={bulkBusy}
+            className="rounded-full px-2 py-1 hover:bg-background/10 disabled:opacity-50"
+            aria-label="Clear selection"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-card rounded-lg border shadow-lg p-6 w-96 space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold">
+                Delete {selectedIds.size} task{selectedIds.size === 1 ? "" : "s"}?
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)} disabled={bulkBusy}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={bulkDelete} disabled={bulkBusy}>
+                {bulkBusy ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <TaskDetailPanel
+        taskId={detailTaskId}
+        open={detailTaskId !== null}
+        onOpenChange={(o) => !o && setDetailTaskId(null)}
+        onUpdate={fetchData}
+      />
+    </div>
+  );
+}
+
+const statusLabels: Record<string, string> = {
+  todo: "To Do",
+  in_progress: "In Progress",
+  done: "Done",
+  blocked: "Blocked",
+};
+

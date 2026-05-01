@@ -1,0 +1,38 @@
+# Don't ship build artifacts, deps, secrets, or anything we re-create in the image
+node_modules
+.next
+.next/cache
+out
+dist
+build
+
+# Local data — never bake into the image (bind-mounted at runtime)
+data
+uploads
+
+# Env / secrets — provided at runtime via env_file
+.env
+.env.*
+!.env.example
+
+# VCS, IDE, OS clutter
+.git
+.github
+.gitignore
+.vscode
+.idea
+.DS_Store
+**/.DS_Store
+*.log
+npm-debug.log*
+
+# Tests, docs, deploy assets that don't belong in the runtime image
+*.md
+!README.md
+deploy/install.sh
+tsconfig.tsbuildinfo
+coverage
+.eslintcache
+
+# CI noise
+.github
