@@ -65,24 +65,42 @@ export async function POST(req: Request) {
   const accountId = brand.metaAccountId;
   const internalBrandId = brand.id;
 
+  // Tracks whether the underlying controller is still writable. We can lose
+  // it from two directions: our own finish() (success/error path), or the
+  // client disconnecting (cancel callback below). Either way we must stop
+  // the heartbeat so it doesn't enqueue onto a dead controller and crash
+  // Node with 'Invalid state: Controller is already closed'.
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
-      let closed = false;
       const send = (event: Record<string, unknown>) => {
         if (closed) return;
-        controller.enqueue(enc.encode(JSON.stringify(event) + "\n"));
+        try {
+          controller.enqueue(enc.encode(JSON.stringify(event) + "\n"));
+        } catch {
+          // Controller raced into a closed state (e.g. client just disconnected).
+          // Mark as closed so subsequent writes/heartbeats no-op.
+          closed = true;
+          if (heartbeat) clearInterval(heartbeat);
+        }
       };
 
       // Keep-alive pings every 15s during silent stretches (persist phase,
       // meta retries) so Cloudflare / proxies don't kill the connection
       // and the browser doesn't see "(network error)".
-      const heartbeat = setInterval(() => send({ type: "ping", t: Date.now() }), 15000);
+      heartbeat = setInterval(() => send({ type: "ping", t: Date.now() }), 15000);
       const finish = () => {
         if (closed) return;
         closed = true;
-        clearInterval(heartbeat);
-        controller.close();
+        if (heartbeat) clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          /* already closed by client cancel */
+        }
       };
 
       try {
@@ -148,6 +166,13 @@ export async function POST(req: Request) {
         send({ type: "error", error: err instanceof Error ? err.message : "Pull failed" });
         finish();
       }
+    },
+    cancel() {
+      // Browser/proxy closed the response stream while we were still writing
+      // (e.g. user navigated away mid-pull). Stop the heartbeat so the next
+      // tick doesn't try to enqueue on a closed controller.
+      closed = true;
+      if (heartbeat) clearInterval(heartbeat);
     },
   });
 
