@@ -90,12 +90,35 @@ export function JarvisOverview() {
     try {
       const res = await fetch("/api/ai/jarvis");
       const data = await res.json();
+      // Treat any non-2xx as an error, even if the body parsed (the route
+      // returns JSON for 503 / 500 too).
+      if (!res.ok && !data.error) data.error = `http_${res.status}`;
       setBriefing(data);
     } catch {
       setBriefing({ briefing: "Jarvis is offline.", error: "network" });
     }
     setLoadingBrief(false);
   }
+
+  // Status drives both the header badge and the collapsed-card badge so they
+  // never disagree with the body text.
+  type Status = "loading" | "online" | "setup" | "offline";
+  const status: Status = loadingBrief
+    ? "loading"
+    : briefing?.error === "not_configured"
+      ? "setup"
+      : briefing?.error
+        ? "offline"
+        : briefing
+          ? "online"
+          : "loading";
+
+  const statusBadge = {
+    loading: { label: "…", className: "text-white/50 bg-white/5 border-white/10" },
+    online: { label: "Online", className: "text-[#99ff33] bg-[#99ff33]/10 border-[#99ff33]/30" },
+    setup: { label: "Setup", className: "text-[#99ff33] bg-[#99ff33]/10 border-[#99ff33]/30" },
+    offline: { label: "Offline", className: "text-red-300 bg-red-500/10 border-red-500/30" },
+  }[status];
 
   // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount; not migrating to Suspense
   useEffect(() => { fetchBriefing(); }, []);
@@ -185,8 +208,11 @@ export function JarvisOverview() {
         </div>
         <div className="flex-1 min-w-0 text-left">
           <span className="text-sm font-bold text-white">Jarvis</span>
-          <span className="text-[10px] uppercase tracking-wider font-semibold text-[#99ff33] bg-[#99ff33]/10 px-1.5 py-0.5 rounded-full border border-[#99ff33]/30 ml-2">
-            {briefing?.error === "not_configured" ? "Setup" : "Online"}
+          <span className={cn(
+            "text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded-full border ml-2",
+            statusBadge.className,
+          )}>
+            {statusBadge.label}
           </span>
           {s && (
             <span className="text-[11px] text-white/50 ml-2">
@@ -208,16 +234,23 @@ export function JarvisOverview() {
           <div className="h-9 w-9 rounded-xl bg-[#99ff33] flex items-center justify-center shadow-[0_0_24px_rgb(153_255_51/0.5)]">
             <Sparkles size={16} className="text-[#0d1a00]" strokeWidth={2.5} />
           </div>
-          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-[#99ff33] border-2 border-[#0a0e0a] animate-pulse" />
+          <span className={cn(
+            "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0a0e0a]",
+            status === "online" && "bg-[#99ff33] animate-pulse",
+            status === "setup" && "bg-amber-400",
+            status === "offline" && "bg-red-500",
+            status === "loading" && "bg-white/30",
+          )} />
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-bold text-white flex items-center gap-2">
             Jarvis
-            {briefing?.error !== "not_configured" && (
-              <span className="text-[9px] uppercase tracking-wider font-semibold text-[#99ff33] bg-[#99ff33]/10 px-1.5 py-0.5 rounded-full border border-[#99ff33]/30">
-                Online
-              </span>
-            )}
+            <span className={cn(
+              "text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded-full border",
+              statusBadge.className,
+            )}>
+              {statusBadge.label}
+            </span>
           </h2>
           <p className="text-[11px] text-white/40">Personal AI workspace assistant</p>
         </div>
