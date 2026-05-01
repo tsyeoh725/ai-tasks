@@ -3,6 +3,7 @@ import { brands } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { serializeBrand } from "../route";
 
 async function loadOwned(id: string, userId: string) {
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, id) });
@@ -21,7 +22,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const { brand, error } = await loadOwned(id, user.id);
   if (error) return error;
 
-  return NextResponse.json(brand);
+  return NextResponse.json(brand ? serializeBrand(brand) : null);
 }
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -48,7 +49,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   await db.update(brands).set(updateData).where(eq(brands.id, id));
 
   const updated = await db.query.brands.findFirst({ where: eq(brands.id, id) });
-  return NextResponse.json(updated);
+  return NextResponse.json(updated ? serializeBrand(updated) : null);
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {

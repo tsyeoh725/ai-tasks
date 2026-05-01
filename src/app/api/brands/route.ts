@@ -15,6 +15,20 @@ function defaultBrandConfig() {
   };
 }
 
+// `config` is stored as JSON text in SQLite. Parse before returning so the
+// client can read brand.config.thresholds.cplMax directly.
+type BrandRow = typeof brands.$inferSelect;
+export function serializeBrand(brand: BrandRow) {
+  let parsedConfig: unknown = defaultBrandConfig();
+  try {
+    parsedConfig = brand.config ? JSON.parse(brand.config) : defaultBrandConfig();
+  } catch {
+    // Corrupt JSON in DB — fall back to defaults rather than crashing the API.
+    parsedConfig = defaultBrandConfig();
+  }
+  return { ...brand, config: parsedConfig };
+}
+
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
@@ -24,7 +38,7 @@ export async function GET() {
     orderBy: (b, { desc }) => [desc(b.createdAt)],
   });
 
-  return NextResponse.json({ brands: result });
+  return NextResponse.json({ brands: result.map(serializeBrand) });
 }
 
 export async function POST(req: Request) {
@@ -73,5 +87,5 @@ export async function POST(req: Request) {
   });
 
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
-  return NextResponse.json(brand, { status: 201 });
+  return NextResponse.json(brand ? serializeBrand(brand) : null, { status: 201 });
 }
