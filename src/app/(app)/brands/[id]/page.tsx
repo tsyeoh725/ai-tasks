@@ -378,7 +378,7 @@ export default function BrandDetailPage({
             const current = presetForActionType(config.costMetric?.actionType);
             const isCustom = current.key === "custom";
             return (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label>Cost metric</Label>
                 <Select
                   value={current.key}
@@ -393,22 +393,20 @@ export default function BrandDetailPage({
                     });
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {COST_METRIC_PRESETS.map((p) => (
                       <SelectItem key={p.key} value={p.key}>
-                        <div className="flex flex-col">
-                          <span>{p.longLabel} ({p.label})</span>
-                          <span className="text-xs text-muted-foreground">{p.description}</span>
-                        </div>
+                        {p.longLabel} ({p.label})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-gray-500">{current.description}</p>
                 {isCustom && (
-                  <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="grid grid-cols-2 gap-2 pt-1">
                     <div>
                       <Label className="text-xs">Short label</Label>
                       <Input
@@ -445,9 +443,6 @@ export default function BrandDetailPage({
                     </div>
                   </div>
                 )}
-                <p className="text-xs text-gray-500">
-                  Used by sync to compute the cost-per-action threshold below.
-                </p>
               </div>
             );
           })()}
