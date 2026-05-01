@@ -4,7 +4,11 @@ import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
 
-const dbPath = path.join(process.cwd(), "data", "ai-tasks.db");
+// In Docker the DB lives on a bind-mounted volume outside the app dir.
+// Falls back to ./data/ai-tasks.db for local dev.
+const dbPath = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.join(process.cwd(), "data", "ai-tasks.db");
 
 // Ensure data directory exists
 const dataDir = path.dirname(dbPath);
