@@ -48,8 +48,11 @@ export async function POST(req: Request) {
   const auth = await authorize(req);
   if ("error" in auth) return auth.error;
 
+  // brandId can come from either the JSON body (cron + script callers) or
+  // the URL query string (the brand-detail page's "Run monitor now" button).
   const body = (await req.json().catch(() => ({}))) as { brandId?: string };
-  const targetBrandId = body.brandId;
+  const url = new URL(req.url);
+  const targetBrandId = body.brandId || url.searchParams.get("brandId") || undefined;
 
   // Determine the brands to scan.
   let targets: Array<{ id: string; userId: string; name: string; projectId: string | null }> = [];
