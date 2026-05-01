@@ -127,7 +127,7 @@ export default function BrandDetailPage({
       const res = await fetch("/api/meta/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: id }),
+        body: JSON.stringify({ brandId: id }),
       });
       if (res.ok) {
         setStatus({ kind: "success", message: "Resync complete" });
@@ -147,7 +147,7 @@ export default function BrandDetailPage({
       const res = await fetch("/api/meta/pull-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_id: id }),
+        body: JSON.stringify({ brandId: id }),
       });
       if (res.ok) {
         setStatus({ kind: "success", message: "Historical pull complete" });
@@ -274,14 +274,18 @@ export default function BrandDetailPage({
       {status.kind !== "idle" && (
         <div
           className={
-            status.kind === "success"
-              ? "text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-400/20 rounded-lg px-3 py-2"
+            "text-sm rounded-lg px-3 py-2.5 flex items-center gap-2 " +
+            (status.kind === "success"
+              ? "text-emerald-700 bg-emerald-50 border border-emerald-200"
               : status.kind === "error"
-                ? "text-xs text-red-300 bg-red-500/10 border border-red-400/20 rounded-lg px-3 py-2"
-                : "text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2"
+                ? "text-red-700 bg-red-50 border border-red-200"
+                : "text-indigo-700 bg-indigo-50 border border-indigo-200 animate-pulse")
           }
+          role="status"
+          aria-live="polite"
         >
-          {status.message}
+          {status.kind === "info" && <Loader2 size={14} className="animate-spin shrink-0" />}
+          <span>{status.message}</span>
         </div>
       )}
 
@@ -545,21 +549,17 @@ export default function BrandDetailPage({
           </p>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button onClick={handleResync} disabled={syncing} variant="outline">
-            {syncing ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <RefreshCw />
-            )}
-            Resync data
+          <Button onClick={handleResync} disabled={syncing || pulling || running} variant="outline">
+            {syncing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+            {syncing ? "Resyncing…" : "Resync data"}
           </Button>
-          <Button onClick={handlePullAll} disabled={pulling} variant="outline">
+          <Button onClick={handlePullAll} disabled={syncing || pulling || running} variant="outline">
             {pulling ? <Loader2 className="animate-spin" /> : <Database />}
-            Full historical pull
+            {pulling ? "Pulling history…" : "Full historical pull"}
           </Button>
-          <Button onClick={handleRunMonitor} disabled={running} variant="outline">
+          <Button onClick={handleRunMonitor} disabled={syncing || pulling || running} variant="outline">
             {running ? <Loader2 className="animate-spin" /> : <Play />}
-            Run monitor now
+            {running ? "Running monitor…" : "Run monitor now"}
           </Button>
         </CardContent>
       </Card>
