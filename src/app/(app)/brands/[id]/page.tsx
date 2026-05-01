@@ -18,6 +18,13 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type BrandConfig = {
   thresholds: {
@@ -56,6 +63,54 @@ const defaultSpendLimit = {
   alertThreshold: 80,
   pauseOnLimit: false,
 };
+
+// Cost metric presets — what counts as a "conversion" for this brand.
+// `actionType` matches Meta Insights' `actions[i].action_type` field; the
+// sync code aggregates per-ad spend / sum(actions where type === actionType)
+// to compute cost-per-action.
+const COST_METRIC_PRESETS: Array<{
+  key: string;
+  label: string;
+  longLabel: string;
+  actionType: string;
+  description: string;
+}> = [
+  { key: "lead", label: "CPL", longLabel: "Cost per Lead", actionType: "lead",
+    description: "Lead-gen / form-fill campaigns" },
+  { key: "purchase", label: "CPP", longLabel: "Cost per Purchase", actionType: "purchase",
+    description: "Sales / conversion campaigns (uses purchase events)" },
+  { key: "omni_purchase", label: "CPP (omni)", longLabel: "Cost per Omni Purchase",
+    actionType: "omni_purchase",
+    description: "Sales / conversions across all surfaces (web + app + offline)" },
+  { key: "messaging", label: "CPMC", longLabel: "Cost per Messaging Conversation",
+    actionType: "onsite_conversion.messaging_conversation_started_7d",
+    description: "Click-to-Messenger / WhatsApp / Instagram DM campaigns" },
+  { key: "link_click", label: "CPC", longLabel: "Cost per Link Click",
+    actionType: "link_click",
+    description: "Traffic campaigns" },
+  { key: "landing_page_view", label: "CPLPV", longLabel: "Cost per Landing Page View",
+    actionType: "landing_page_view",
+    description: "Traffic with pixel-confirmed page loads" },
+  { key: "add_to_cart", label: "CPATC", longLabel: "Cost per Add-to-Cart",
+    actionType: "add_to_cart",
+    description: "Mid-funnel ecommerce" },
+  { key: "initiate_checkout", label: "CPIC", longLabel: "Cost per Initiate Checkout",
+    actionType: "initiate_checkout",
+    description: "Bottom-funnel ecommerce" },
+  { key: "video_view", label: "CPV", longLabel: "Cost per Video View",
+    actionType: "video_view",
+    description: "Video / awareness campaigns" },
+  { key: "custom", label: "Custom", longLabel: "Custom action type", actionType: "",
+    description: "Enter your own Meta Insights action_type below" },
+];
+
+function presetForActionType(actionType: string | undefined) {
+  if (!actionType) return COST_METRIC_PRESETS[0];
+  return (
+    COST_METRIC_PRESETS.find((p) => p.actionType === actionType) ??
+    COST_METRIC_PRESETS[COST_METRIC_PRESETS.length - 1] // → "custom"
+  );
+}
 
 type Status = { kind: "idle" } | { kind: "info"; message: string } | { kind: "success"; message: string } | { kind: "error"; message: string };
 
@@ -318,6 +373,85 @@ export default function BrandDetailPage({
           </p>
         </CardHeader>
         <CardContent className="space-y-4 max-w-md">
+          {/* Cost metric — what counts as a conversion for this brand */}
+          {(() => {
+            const current = presetForActionType(config.costMetric?.actionType);
+            const isCustom = current.key === "custom";
+            return (
+              <div className="space-y-2">
+                <Label>Cost metric</Label>
+                <Select
+                  value={current.key}
+                  onValueChange={(key) => {
+                    const preset = COST_METRIC_PRESETS.find((p) => p.key === key)!;
+                    setConfig({
+                      ...config,
+                      costMetric: {
+                        label: preset.label,
+                        actionType: preset.actionType || (config.costMetric?.actionType ?? ""),
+                      },
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COST_METRIC_PRESETS.map((p) => (
+                      <SelectItem key={p.key} value={p.key}>
+                        <div className="flex flex-col">
+                          <span>{p.longLabel} ({p.label})</span>
+                          <span className="text-xs text-muted-foreground">{p.description}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {isCustom && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <div>
+                      <Label className="text-xs">Short label</Label>
+                      <Input
+                        value={config.costMetric?.label ?? ""}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            costMetric: {
+                              label: e.target.value,
+                              actionType: config.costMetric?.actionType ?? "",
+                            },
+                          })
+                        }
+                        placeholder="e.g., CPP"
+                        className="mt-1 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Meta action_type</Label>
+                      <Input
+                        value={config.costMetric?.actionType ?? ""}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            costMetric: {
+                              label: config.costMetric?.label ?? "",
+                              actionType: e.target.value,
+                            },
+                          })
+                        }
+                        placeholder="e.g., offsite_conversion.fb_pixel_purchase"
+                        className="mt-1 font-mono text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-gray-500">
+                  Used by sync to compute the cost-per-action threshold below.
+                </p>
+              </div>
+            );
+          })()}
+
           <div>
             <Label>{config.costMetric?.label || "CPL"} Maximum (RM)</Label>
             <Input
