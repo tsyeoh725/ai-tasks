@@ -21,40 +21,40 @@ import { Badge } from "@/components/ui/badge";
 
 type BrandConfig = {
   thresholds: {
-    cpl_max: number | null;
-    ctr_min: number | null;
-    frequency_max: number | null;
+    cplMax: number | null;
+    ctrMin: number | null;
+    frequencyMax: number | null;
   };
   toggles: {
-    kill_enabled: boolean;
-    budget_enabled: boolean;
-    duplicate_enabled: boolean;
+    killEnabled: boolean;
+    budgetEnabled: boolean;
+    duplicateEnabled: boolean;
   };
   preferences: string[];
-  insights_date_range: number;
-  cost_metric?: { label: string; action_type: string };
-  spend_limit?: {
-    monthly_limit: number | null;
-    daily_limit: number | null;
-    alert_threshold: number;
-    pause_on_limit: boolean;
+  insightsDateRange: number;
+  costMetric?: { label: string; actionType: string };
+  spendLimit?: {
+    monthlyLimit: number | null;
+    dailyLimit: number | null;
+    alertThreshold: number;
+    pauseOnLimit: boolean;
   };
 };
 
 type Brand = {
   id: string;
   name: string;
-  meta_account_id: string;
+  metaAccountId: string;
   config: BrandConfig;
-  is_active: boolean;
-  project_id?: string | null;
+  isActive: boolean;
+  projectId?: string | null;
 };
 
 const defaultSpendLimit = {
-  monthly_limit: null,
-  daily_limit: null,
-  alert_threshold: 80,
-  pause_on_limit: false,
+  monthlyLimit: null,
+  dailyLimit: null,
+  alertThreshold: 80,
+  pauseOnLimit: false,
 };
 
 type Status = { kind: "idle" } | { kind: "info"; message: string } | { kind: "success"; message: string } | { kind: "error"; message: string };
@@ -86,7 +86,7 @@ export default function BrandDetailPage({
           setBrand(found);
           setConfig({
             ...found.config,
-            spend_limit: found.config?.spend_limit || defaultSpendLimit,
+            spendLimit: found.config?.spendLimit || defaultSpendLimit,
           });
         }
       } catch {
@@ -211,7 +211,7 @@ export default function BrandDetailPage({
     );
   }
 
-  const spendLimit = config.spend_limit || defaultSpendLimit;
+  const spendLimit = config.spendLimit || defaultSpendLimit;
 
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6 animate-fade-in">
@@ -228,17 +228,17 @@ export default function BrandDetailPage({
               <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
                 {brand.name}
               </h1>
-              <Badge variant={brand.is_active ? "success" : "secondary"}>
-                {brand.is_active ? "Active" : "Inactive"}
+              <Badge variant={brand.isActive ? "success" : "secondary"}>
+                {brand.isActive ? "Active" : "Inactive"}
               </Badge>
             </div>
             <div className="flex items-center gap-3 mt-1">
               <span className="text-xs text-gray-500 font-mono">
-                {brand.meta_account_id}
+                {brand.metaAccountId}
               </span>
-              {brand.project_id && (
+              {brand.projectId && (
                 <Link
-                  href={`/projects/${brand.project_id}`}
+                  href={`/projects/${brand.projectId}`}
                   className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5 transition-colors"
                 >
                   <ExternalLink className="w-3 h-3" />
@@ -295,17 +295,17 @@ export default function BrandDetailPage({
         </CardHeader>
         <CardContent className="space-y-4 max-w-md">
           <div>
-            <Label>{config.cost_metric?.label || "CPL"} Maximum (RM)</Label>
+            <Label>{config.costMetric?.label || "CPL"} Maximum (RM)</Label>
             <Input
               type="number"
               step="0.01"
-              value={config.thresholds.cpl_max ?? ""}
+              value={config.thresholds.cplMax ?? ""}
               onChange={(e) =>
                 setConfig({
                   ...config,
                   thresholds: {
                     ...config.thresholds,
-                    cpl_max: e.target.value ? parseFloat(e.target.value) : null,
+                    cplMax: e.target.value ? parseFloat(e.target.value) : null,
                   },
                 })
               }
@@ -318,13 +318,13 @@ export default function BrandDetailPage({
             <Input
               type="number"
               step="0.01"
-              value={config.thresholds.ctr_min ?? ""}
+              value={config.thresholds.ctrMin ?? ""}
               onChange={(e) =>
                 setConfig({
                   ...config,
                   thresholds: {
                     ...config.thresholds,
-                    ctr_min: e.target.value ? parseFloat(e.target.value) : null,
+                    ctrMin: e.target.value ? parseFloat(e.target.value) : null,
                   },
                 })
               }
@@ -337,13 +337,13 @@ export default function BrandDetailPage({
             <Input
               type="number"
               step="0.1"
-              value={config.thresholds.frequency_max ?? ""}
+              value={config.thresholds.frequencyMax ?? ""}
               onChange={(e) =>
                 setConfig({
                   ...config,
                   thresholds: {
                     ...config.thresholds,
-                    frequency_max: e.target.value
+                    frequencyMax: e.target.value
                       ? parseFloat(e.target.value)
                       : null,
                   },
@@ -373,11 +373,11 @@ export default function BrandDetailPage({
               </p>
             </div>
             <Switch
-              checked={config.toggles.kill_enabled}
+              checked={config.toggles.killEnabled}
               onCheckedChange={(checked) =>
                 setConfig({
                   ...config,
-                  toggles: { ...config.toggles, kill_enabled: checked },
+                  toggles: { ...config.toggles, killEnabled: checked },
                 })
               }
             />
@@ -391,11 +391,11 @@ export default function BrandDetailPage({
               </p>
             </div>
             <Switch
-              checked={config.toggles.budget_enabled}
+              checked={config.toggles.budgetEnabled}
               onCheckedChange={(checked) =>
                 setConfig({
                   ...config,
-                  toggles: { ...config.toggles, budget_enabled: checked },
+                  toggles: { ...config.toggles, budgetEnabled: checked },
                 })
               }
             />
@@ -409,11 +409,11 @@ export default function BrandDetailPage({
               </p>
             </div>
             <Switch
-              checked={config.toggles.duplicate_enabled}
+              checked={config.toggles.duplicateEnabled}
               onCheckedChange={(checked) =>
                 setConfig({
                   ...config,
-                  toggles: { ...config.toggles, duplicate_enabled: checked },
+                  toggles: { ...config.toggles, duplicateEnabled: checked },
                 })
               }
             />
@@ -436,13 +436,13 @@ export default function BrandDetailPage({
             <Input
               type="number"
               step="100"
-              value={spendLimit.monthly_limit ?? ""}
+              value={spendLimit.monthlyLimit ?? ""}
               onChange={(e) =>
                 setConfig({
                   ...config,
-                  spend_limit: {
+                  spendLimit: {
                     ...spendLimit,
-                    monthly_limit: e.target.value
+                    monthlyLimit: e.target.value
                       ? parseFloat(e.target.value)
                       : null,
                   },
@@ -457,13 +457,13 @@ export default function BrandDetailPage({
             <Input
               type="number"
               step="10"
-              value={spendLimit.daily_limit ?? ""}
+              value={spendLimit.dailyLimit ?? ""}
               onChange={(e) =>
                 setConfig({
                   ...config,
-                  spend_limit: {
+                  spendLimit: {
                     ...spendLimit,
-                    daily_limit: e.target.value
+                    dailyLimit: e.target.value
                       ? parseFloat(e.target.value)
                       : null,
                   },
@@ -481,11 +481,11 @@ export default function BrandDetailPage({
               </p>
             </div>
             <Switch
-              checked={spendLimit.pause_on_limit}
+              checked={spendLimit.pauseOnLimit}
               onCheckedChange={(checked) =>
                 setConfig({
                   ...config,
-                  spend_limit: { ...spendLimit, pause_on_limit: checked },
+                  spendLimit: { ...spendLimit, pauseOnLimit: checked },
                 })
               }
             />

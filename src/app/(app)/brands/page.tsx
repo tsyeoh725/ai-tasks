@@ -18,33 +18,33 @@ import {
 
 type BrandConfig = {
   thresholds: {
-    cpl_max: number | null;
-    ctr_min: number | null;
-    frequency_max: number | null;
+    cplMax: number | null;
+    ctrMin: number | null;
+    frequencyMax: number | null;
   };
   toggles: {
-    kill_enabled: boolean;
-    budget_enabled: boolean;
-    duplicate_enabled: boolean;
+    killEnabled: boolean;
+    budgetEnabled: boolean;
+    duplicateEnabled: boolean;
   };
   preferences: string[];
-  insights_date_range: number;
-  cost_metric?: { label: string; action_type: string };
-  spend_limit?: {
-    monthly_limit: number | null;
-    daily_limit: number | null;
-    alert_threshold: number;
-    pause_on_limit: boolean;
+  insightsDateRange: number;
+  costMetric?: { label: string; actionType: string };
+  spendLimit?: {
+    monthlyLimit: number | null;
+    dailyLimit: number | null;
+    alertThreshold: number;
+    pauseOnLimit: boolean;
   };
 };
 
 type Brand = {
   id: string;
   name: string;
-  meta_account_id: string;
+  metaAccountId: string;
   config: BrandConfig;
-  is_active: boolean;
-  project_id?: string | null;
+  isActive: boolean;
+  projectId?: string | null;
 };
 
 export default function BrandsPage() {
@@ -84,7 +84,7 @@ export default function BrandsPage() {
       const res = await fetch("/api/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, meta_account_id: accountId }),
+        body: JSON.stringify({ name, metaAccountId: accountId }),
       });
 
       if (res.ok) {
@@ -193,31 +193,31 @@ export default function BrandsPage() {
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2">
                     <CardTitle className="truncate">{brand.name}</CardTitle>
-                    <Badge variant={brand.is_active ? "success" : "secondary"}>
-                      {brand.is_active ? "Active" : "Inactive"}
+                    <Badge variant={brand.isActive ? "success" : "secondary"}>
+                      {brand.isActive ? "Active" : "Inactive"}
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent>
                   <p className="text-xs text-gray-500 font-mono truncate">
-                    {brand.meta_account_id}
+                    {brand.metaAccountId}
                   </p>
-                  {brand.config?.spend_limit?.monthly_limit && (
+                  {brand.config?.spendLimit?.monthlyLimit && (
                     <p className="text-xs text-gray-500 mt-1 font-mono">
-                      RM {brand.config.spend_limit.monthly_limit.toLocaleString()}/mo
+                      RM {brand.config.spendLimit.monthlyLimit.toLocaleString()}/mo
                     </p>
                   )}
                   <div className="mt-3 flex gap-1.5 flex-wrap">
-                    {brand.config?.toggles?.kill_enabled && (
+                    {brand.config?.toggles?.killEnabled && (
                       <Badge variant="destructive">Kill</Badge>
                     )}
-                    {brand.config?.toggles?.budget_enabled && (
+                    {brand.config?.toggles?.budgetEnabled && (
                       <Badge variant="default">Budget</Badge>
                     )}
-                    {brand.config?.toggles?.duplicate_enabled && (
+                    {brand.config?.toggles?.duplicateEnabled && (
                       <Badge variant="secondary">Duplicate</Badge>
                     )}
-                    {brand.config?.spend_limit?.pause_on_limit && (
+                    {brand.config?.spendLimit?.pauseOnLimit && (
                       <Badge variant="warning">Spend Cap</Badge>
                     )}
                   </div>
