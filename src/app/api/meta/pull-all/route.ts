@@ -51,7 +51,7 @@ export async function POST(req: Request) {
   try {
     const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, user.id, accessToken);
     const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, user.id, accessToken);
-    const adCount = await syncAdsWithInsights(
+    const insights = await syncAdsWithInsights(
       brand.metaAccountId,
       brand.id,
       user.id,
@@ -66,14 +66,28 @@ export async function POST(req: Request) {
       eventType: "pull_all_historical",
       entityType: "brand",
       entityId: brand.id,
-      payload: JSON.stringify({ months, campaignCount, adSetCount, adCount, costActionType }),
-      level: "info",
+      payload: JSON.stringify({
+        months,
+        campaignCount,
+        adSetCount,
+        insights,
+        costActionType,
+      }),
+      level: insights.chunksFailed > 0 ? "warn" : "info",
       createdAt: new Date(),
     });
 
     return NextResponse.json({
       success: true,
-      synced: { campaigns: campaignCount, adSets: adSetCount, ads: adCount },
+      synced: {
+        campaigns: campaignCount,
+        adSets: adSetCount,
+        ads: insights.ads,
+        chunksTotal: insights.chunksTotal,
+        chunksSucceeded: insights.chunksSucceeded,
+        chunksFailed: insights.chunksFailed,
+        failedChunks: insights.failedChunks,
+      },
     });
   } catch (err) {
     return NextResponse.json(

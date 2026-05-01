@@ -104,6 +104,33 @@ const COST_METRIC_PRESETS: Array<{
     description: "Enter your own Meta Insights action_type below" },
 ];
 
+type SyncSummary = {
+  campaigns?: number;
+  adSets?: number;
+  ads?: number;
+  chunksTotal?: number;
+  chunksSucceeded?: number;
+  chunksFailed?: number;
+  failedChunks?: Array<{ since: string; until: string; error: string }>;
+};
+
+function formatSyncSummary(label: string, s: SyncSummary | undefined): string {
+  if (!s) return `${label} complete`;
+  const counts = `${s.campaigns ?? 0} campaigns, ${s.adSets ?? 0} ad sets, ${s.ads ?? 0} ads`;
+  if (s.chunksTotal && s.chunksTotal > 1) {
+    if (s.chunksFailed && s.chunksFailed > 0) {
+      const ranges = (s.failedChunks ?? [])
+        .slice(0, 3)
+        .map((c) => `${c.since}…${c.until}`)
+        .join(", ");
+      const more = (s.failedChunks?.length ?? 0) > 3 ? ` (+${(s.failedChunks?.length ?? 0) - 3} more)` : "";
+      return `${label} partial — ${s.chunksSucceeded}/${s.chunksTotal} chunks succeeded; ${counts}. Failed ranges: ${ranges}${more}`;
+    }
+    return `${label} complete — all ${s.chunksTotal} chunks (${counts})`;
+  }
+  return `${label} complete — ${counts}`;
+}
+
 function presetForActionType(actionType: string | undefined) {
   if (!actionType) return COST_METRIC_PRESETS[0];
   return (
@@ -186,11 +213,7 @@ export default function BrandDetailPage({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        const s = data?.synced;
-        const summary = s
-          ? ` (${s.campaigns ?? 0} campaigns, ${s.adSets ?? 0} ad sets, ${s.ads ?? 0} ads)`
-          : "";
-        setStatus({ kind: "success", message: `Resync complete${summary}` });
+        setStatus({ kind: data?.synced?.chunksFailed ? "info" : "success", message: formatSyncSummary("Resync", data?.synced) });
       } else {
         setStatus({
           kind: "error",
@@ -207,7 +230,11 @@ export default function BrandDetailPage({
 
   async function handlePullAll() {
     setPulling(true);
-    setStatus({ kind: "info", message: "Pulling full history (this can take several minutes)..." });
+    setStatus({
+      kind: "info",
+      message:
+        "Pulling 36 months in 90-day chunks. This usually takes 2-10 minutes — keep this tab open.",
+    });
     try {
       const res = await fetch("/api/meta/pull-all", {
         method: "POST",
@@ -216,11 +243,10 @@ export default function BrandDetailPage({
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        const s = data?.synced;
-        const summary = s
-          ? ` (${s.campaigns ?? 0} campaigns, ${s.adSets ?? 0} ad sets, ${s.ads ?? 0} ads)`
-          : "";
-        setStatus({ kind: "success", message: `Historical pull complete${summary}` });
+        setStatus({
+          kind: data?.synced?.chunksFailed ? "info" : "success",
+          message: formatSyncSummary("Historical pull", data?.synced),
+        });
       } else {
         setStatus({
           kind: "error",

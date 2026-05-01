@@ -29,6 +29,45 @@ export interface MetaInsight {
   date_stop?: string;
 }
 
+// Meta error codes that are retryable (rate limit / transient throttling).
+// Docs: https://developers.facebook.com/docs/graph-api/guides/error-handling
+const RETRYABLE_META_CODES = new Set([1, 2, 4, 17, 32, 80004, 613]);
+
+async function fetchWithRetry(url: string, attempt = 0): Promise<Response> {
+  const res = await fetch(url);
+  if (res.ok) return res;
+
+  // Decide if this status / Meta error code is worth retrying.
+  let retryable = res.status >= 500 || res.status === 429;
+  let metaCode: number | undefined;
+  let metaMessage: string | undefined;
+  try {
+    const body = (await res.clone().json()) as {
+      error?: { code?: number; message?: string; error_subcode?: number };
+    };
+    metaCode = body?.error?.code;
+    metaMessage = body?.error?.message;
+    if (metaCode !== undefined && RETRYABLE_META_CODES.has(metaCode)) retryable = true;
+  } catch {
+    /* body wasn't JSON */
+  }
+
+  if (retryable && attempt < 5) {
+    // Exponential backoff: 2s, 4s, 8s, 16s, 32s. Rate-limit (429 / code 17 / 80004)
+    // gets a longer pause to let Meta's window roll over.
+    const longBackoff = res.status === 429 || metaCode === 17 || metaCode === 80004;
+    const delay = (longBackoff ? 5000 : 2000) * Math.pow(2, attempt);
+    log("warn", "meta_api", `retry ${attempt + 1}/5 in ${delay}ms`, {
+      status: res.status,
+      metaCode,
+      metaMessage,
+    });
+    await new Promise((r) => setTimeout(r, delay));
+    return fetchWithRetry(url, attempt + 1);
+  }
+  return res;
+}
+
 async function fetchAllPages(
   endpoint: string,
   accessToken: string,
@@ -37,7 +76,7 @@ async function fetchAllPages(
   const qs = new URLSearchParams({ access_token: accessToken, limit: "500", ...params });
   const firstUrl = `${META_API_BASE}/${endpoint}?${qs.toString()}`;
   const results: unknown[] = [];
-  let res = await fetch(firstUrl);
+  let res = await fetchWithRetry(firstUrl);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(`Meta API error: ${res.status} - ${JSON.stringify(err)}`);
@@ -45,7 +84,7 @@ async function fetchAllPages(
   let page = (await res.json()) as { data?: unknown[]; paging?: { next?: string } };
   results.push(...(page.data || []));
   while (page.paging?.next) {
-    res = await fetch(page.paging.next);
+    res = await fetchWithRetry(page.paging.next);
     if (!res.ok) break;
     page = (await res.json()) as { data?: unknown[]; paging?: { next?: string } };
     results.push(...(page.data || []));
@@ -319,6 +358,14 @@ export async function syncAdSets(
   return count;
 }
 
+export type InsightsSyncResult = {
+  ads: number;
+  chunksTotal: number;
+  chunksSucceeded: number;
+  chunksFailed: number;
+  failedChunks: Array<{ since: string; until: string; error: string }>;
+};
+
 export async function syncAdsWithInsights(
   metaAccountId: string,
   brandId: string,
@@ -326,11 +373,15 @@ export async function syncAdsWithInsights(
   accessToken: string,
   dateRange: number = 7,
   costActionType: string = "lead",
-): Promise<number> {
-  const MAX_CHUNK_DAYS = 180;
+): Promise<InsightsSyncResult> {
+  // 90-day chunks: Meta's daily-breakdown (`time_increment=1`) limit is 90
+  // days per request for many ad accounts. 180 was too aggressive and would
+  // bail with code 100 / 'reduce the time range' for high-volume accounts.
+  const MAX_CHUNK_DAYS = 90;
   const today = new Date();
   const startDate = new Date(today);
   startDate.setDate(startDate.getDate() - Math.min(dateRange, 1100));
+  // Meta's hard lookback for ad-level insights is 37 months. Use 36 to be safe.
   const maxStart = new Date(today);
   maxStart.setMonth(maxStart.getMonth() - 36);
   if (startDate < maxStart) startDate.setTime(maxStart.getTime());
@@ -344,6 +395,10 @@ export async function syncAdsWithInsights(
       until: today.toISOString().split("T")[0],
     });
   } else {
+    // Walk from oldest → newest in MAX_CHUNK_DAYS slices. We pull oldest first
+    // so that if Meta starts rate-limiting halfway through, we still have the
+    // historical baseline (the recent data is also picked up by the regular
+    // 6-hour cron).
     const cursor = new Date(startDate);
     while (cursor < today) {
       const chunkEnd = new Date(cursor);
@@ -358,16 +413,37 @@ export async function syncAdsWithInsights(
   }
 
   let allInsights: MetaInsight[] = [];
+  let chunksSucceeded = 0;
+  const failedChunks: InsightsSyncResult["failedChunks"] = [];
+
   for (let i = 0; i < chunks.length; i++) {
-    const timeRange = JSON.stringify(chunks[i]);
-    const chunkInsights = (await fetchAllPages(`act_${metaAccountId}/insights`, accessToken, {
-      fields:
-        "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,ctr,frequency,actions,date_start,date_stop",
-      level: "ad",
-      time_range: timeRange,
-      time_increment: "1",
-    })) as MetaInsight[];
-    allInsights = allInsights.concat(chunkInsights);
+    const chunk = chunks[i];
+    const timeRange = JSON.stringify(chunk);
+    try {
+      const chunkInsights = (await fetchAllPages(`act_${metaAccountId}/insights`, accessToken, {
+        fields:
+          "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,ctr,frequency,actions,date_start,date_stop",
+        level: "ad",
+        time_range: timeRange,
+        time_increment: "1",
+      })) as MetaInsight[];
+      allInsights = allInsights.concat(chunkInsights);
+      chunksSucceeded += 1;
+      log("info", "meta_api", `chunk ${i + 1}/${chunks.length} ok`, {
+        since: chunk.since,
+        until: chunk.until,
+        rows: chunkInsights.length,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failedChunks.push({ since: chunk.since, until: chunk.until, error: msg });
+      log("error", "meta_api", `chunk ${i + 1}/${chunks.length} failed`, {
+        since: chunk.since,
+        until: chunk.until,
+        error: msg,
+      });
+    }
+    // Throttle between chunks even on success — Meta tracks call rate per app.
     if (i < chunks.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
@@ -506,5 +582,11 @@ export async function syncAdsWithInsights(
     }
   }
 
-  return allInsights.length;
+  return {
+    ads: adTotals.size,
+    chunksTotal: chunks.length,
+    chunksSucceeded,
+    chunksFailed: failedChunks.length,
+    failedChunks,
+  };
 }
