@@ -855,6 +855,16 @@ export const globalSettings = sqliteTable("global_settings", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ---- App Config ----
+// Global, instance-wide key/value store for things like the OpenAI API key
+// that the user sets via the Settings UI instead of editing the .env file.
+// Encrypted values are stored as JSON: {iv, tag, data} (AES-256-GCM).
+export const appConfig = sqliteTable("app_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ============ WORKFLOW CHAINS ============
 // A chain is a sequence of tasks that auto-advance when the current task is completed/approved.
 export const workflowChains = sqliteTable("workflow_chains", {

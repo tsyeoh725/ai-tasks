@@ -143,11 +143,11 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  if (!isAiConfigured()) {
+  if (!(await isAiConfigured())) {
     return NextResponse.json({
       error: "not_configured",
       briefing:
-        "AI is not configured — set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env.local to enable Jarvis.",
+        "AI is not configured — add an OpenAI or Anthropic key under Settings → AI to enable Jarvis.",
     }, { status: 503 });
   }
 
@@ -181,9 +181,9 @@ export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  if (!isAiConfigured()) {
+  if (!(await isAiConfigured())) {
     return NextResponse.json(
-      { error: "AI is not configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env.local." },
+      { error: "AI is not configured. Add an OpenAI or Anthropic key under Settings → AI." },
       { status: 503 }
     );
   }

@@ -149,7 +149,7 @@ Ad health signals trigger automatic task creation (creative fatigue → "Need ne
       ? `${teammate.systemPrompt}\n\n${userContext}`
       : defaultSystemPrompt;
 
-    const model = getModel();
+    const model = await getModel();
     const allTools = getCommandTools(user.id!);
     const tools = teammate?.toolAllowlist
       ? Object.fromEntries(

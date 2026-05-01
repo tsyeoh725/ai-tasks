@@ -1,29 +1,39 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { streamText } from "ai";
+import { getAiModel, getAnthropicKey, getOpenAIKey } from "./app-config";
 
-export function getModel() {
-  if (process.env.ANTHROPIC_API_KEY) {
-    const modelId = process.env.AI_MODEL || "claude-sonnet-4-6";
-    const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+export async function getModel() {
+  const [anthropicKey, openaiKey, configuredModel] = await Promise.all([
+    getAnthropicKey(),
+    getOpenAIKey(),
+    getAiModel(),
+  ]);
+
+  if (anthropicKey) {
+    const modelId = configuredModel || "claude-sonnet-4-6";
+    const anthropic = createAnthropic({ apiKey: anthropicKey });
     return anthropic(modelId);
   }
 
-  if (process.env.OPENAI_API_KEY) {
-    const modelId = process.env.OPENAI_MODEL || "gpt-4o-mini";
-    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (openaiKey) {
+    const modelId = configuredModel || "gpt-4o-mini";
+    const openai = createOpenAI({ apiKey: openaiKey });
     return openai(modelId);
   }
 
-  throw new Error("No AI API key configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY in .env.local");
+  throw new Error(
+    "No AI API key configured. Add an OpenAI or Anthropic key under Settings → AI, or set OPENAI_API_KEY / ANTHROPIC_API_KEY in the env.",
+  );
 }
 
-export function isAiConfigured(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY);
+export async function isAiConfigured(): Promise<boolean> {
+  const [anthropicKey, openaiKey] = await Promise.all([getAnthropicKey(), getOpenAIKey()]);
+  return !!(anthropicKey || openaiKey);
 }
 
 export async function streamAiResponse(systemPrompt: string, userMessage: string) {
-  const model = getModel();
+  const model = await getModel();
 
   const result = streamText({
     model,
@@ -35,7 +45,7 @@ export async function streamAiResponse(systemPrompt: string, userMessage: string
 }
 
 export async function generateAiResponse(systemPrompt: string, userMessage: string): Promise<string> {
-  const model = getModel();
+  const model = await getModel();
 
   const result = streamText({
     model,

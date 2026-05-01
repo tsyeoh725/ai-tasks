@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,10 @@ export default function SettingsPage() {
       {/* Telegram */}
       <TelegramSection />
 
-      {/* API Keys */}
+      {/* AI provider keys (used BY this app to call OpenAI/Anthropic) */}
+      <AiSection />
+
+      {/* API Keys (used by external clients to call INTO this app) */}
       <ApiKeysSection />
     </div>
   );
@@ -596,6 +599,175 @@ function MonitorScheduleSection() {
   );
 }
 
+function AiSection() {
+  type Source = "db" | "env" | "none";
+  type ProviderStatus = { configured: boolean; source: Source; lastFour: string | null };
+  type Status = { openai: ProviderStatus; anthropic: ProviderStatus; model: string | null };
+
+  const [status, setStatus] = useState<Status | null>(null);
+  const [openaiInput, setOpenaiInput] = useState("");
+  const [anthropicInput, setAnthropicInput] = useState("");
+  const [modelInput, setModelInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const res = await fetch("/api/settings/ai");
+    if (res.ok) {
+      const data = (await res.json()) as Status;
+      setStatus(data);
+      setModelInput(data.model ?? "");
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  async function save(payload: Record<string, string | null>) {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/settings/ai", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as Status;
+        setStatus(data);
+        setOpenaiInput("");
+        setAnthropicInput("");
+        setMessage("Saved");
+        setTimeout(() => setMessage(null), 2000);
+      } else {
+        setMessage("Save failed");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function describe(s: ProviderStatus) {
+    if (!s.configured) return <span className="text-muted-foreground">Not set</span>;
+    const masked = s.lastFour ? `••••••••${s.lastFour}` : "•••••";
+    const sourceLabel = s.source === "db" ? "set via this UI" : "from .env";
+    return (
+      <span className="font-mono text-xs">
+        {masked} <span className="text-muted-foreground font-sans">({sourceLabel})</span>
+      </span>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>AI</CardTitle>
+        <CardDescription>
+          Provider keys this app uses to call OpenAI / Anthropic. Saved keys are encrypted at rest
+          and override the matching environment variable.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* OpenAI */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label>OpenAI API Key</Label>
+            <div className="text-sm">{status ? describe(status.openai) : "Loading..."}</div>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={openaiInput}
+              onChange={(e) => setOpenaiInput(e.target.value)}
+              placeholder="sk-proj-..."
+              autoComplete="off"
+            />
+            <Button
+              onClick={() => save({ openaiApiKey: openaiInput })}
+              disabled={saving || !openaiInput.trim()}
+            >
+              Save
+            </Button>
+            {status?.openai.source === "db" && (
+              <Button
+                variant="outline"
+                onClick={() => save({ openaiApiKey: "" })}
+                disabled={saving}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Anthropic */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label>Anthropic API Key</Label>
+            <div className="text-sm">{status ? describe(status.anthropic) : "Loading..."}</div>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={anthropicInput}
+              onChange={(e) => setAnthropicInput(e.target.value)}
+              placeholder="sk-ant-..."
+              autoComplete="off"
+            />
+            <Button
+              onClick={() => save({ anthropicApiKey: anthropicInput })}
+              disabled={saving || !anthropicInput.trim()}
+            >
+              Save
+            </Button>
+            {status?.anthropic.source === "db" && (
+              <Button
+                variant="outline"
+                onClick={() => save({ anthropicApiKey: "" })}
+                disabled={saving}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            If both keys are set, Anthropic is used (matches the existing fallback order).
+          </p>
+        </div>
+
+        <Separator />
+
+        {/* Model override */}
+        <div className="space-y-2">
+          <Label>Model</Label>
+          <div className="flex gap-2">
+            <Input
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              placeholder="e.g. gpt-4o-mini, claude-sonnet-4-6"
+            />
+            <Button
+              onClick={() => save({ model: modelInput })}
+              disabled={saving || !modelInput.trim() || modelInput === (status?.model ?? "")}
+            >
+              Save
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Defaults: <code className="font-mono">claude-sonnet-4-6</code> for Anthropic,{" "}
+            <code className="font-mono">gpt-4o-mini</code> for OpenAI.
+          </p>
+        </div>
+
+        {message && <p className="text-sm text-emerald-600">{message}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ApiKeysSection() {
   const confirm = useConfirm();
   const [keys, setKeys] = useState<{ id: string; name: string; createdAt: string }[]>([]);
@@ -640,9 +812,11 @@ function ApiKeysSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>API Keys</CardTitle>
+        <CardTitle>External API Tokens</CardTitle>
         <CardDescription>
-          Generate API keys for programmatic access via the OpenAPI
+          Tokens that <strong>external clients</strong> (Custom GPTs, n8n, scripts, etc.) use to
+          call <em>this</em> app&apos;s API. Not the same as the OpenAI key — that lives in the AI
+          section above.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
