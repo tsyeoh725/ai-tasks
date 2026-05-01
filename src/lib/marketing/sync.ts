@@ -73,7 +73,13 @@ async function fetchAllPages(
   accessToken: string,
   params: Record<string, string> = {},
 ): Promise<unknown[]> {
-  const qs = new URLSearchParams({ access_token: accessToken, limit: "500", ...params });
+  // limit=100 (was 500): 90-day daily-insight chunks with the `actions[]`
+  // field on a high-volume account blow past Meta's per-response payload
+  // cap with limit=500. Meta then surfaces an opaque
+  // "code 1, error_subcode 99 / Unknown error" instead of a clear size
+  // error. limit=100 keeps each page well under the cap; we just paginate
+  // more (fetchAllPages already follows .paging.next transparently).
+  const qs = new URLSearchParams({ access_token: accessToken, limit: "100", ...params });
   const firstUrl = `${META_API_BASE}/${endpoint}?${qs.toString()}`;
   const results: unknown[] = [];
   let res = await fetchWithRetry(firstUrl);
