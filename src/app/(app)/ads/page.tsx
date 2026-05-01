@@ -32,11 +32,11 @@ type AdData = {
   impressions: number;
   clicks: number;
   leads: number;
-  meta_ad_id: string;
-  brand_id: string;
-  brand_name?: string;
-  ad_set_name?: string;
-  campaign_name?: string;
+  metaAdId: string;
+  brandId: string;
+  brandName?: string;
+  adSetName?: string;
+  campaignName?: string;
 };
 
 type BrandData = {
@@ -44,11 +44,11 @@ type BrandData = {
   name: string;
   config: {
     thresholds: {
-      cpl_max: number | null;
-      ctr_min: number | null;
-      frequency_max: number | null;
+      cplMax: number | null;
+      ctrMin: number | null;
+      frequencyMax: number | null;
     };
-    cost_metric?: { label: string; action_type: string };
+    costMetric?: { label: string; actionType: string };
   };
 };
 
@@ -59,26 +59,26 @@ function getAdHealth(
   t: BrandData["config"]["thresholds"],
 ): AdHealth {
   if (
-    t.cpl_max &&
-    t.ctr_min &&
+    t.cplMax &&
+    t.ctrMin &&
     ad.cpl !== null &&
     ad.ctr !== null &&
-    ad.cpl < t.cpl_max * 0.5 &&
-    ad.ctr > t.ctr_min * 2
+    ad.cpl < t.cplMax * 0.5 &&
+    ad.ctr > t.ctrMin * 2
   )
     return "winner";
   if (
-    t.cpl_max &&
-    t.ctr_min &&
+    t.cplMax &&
+    t.ctrMin &&
     ad.cpl !== null &&
     ad.ctr !== null &&
-    (ad.cpl > t.cpl_max * 2 || ad.ctr < t.ctr_min * 0.4)
+    (ad.cpl > t.cplMax * 2 || ad.ctr < t.ctrMin * 0.4)
   )
     return "kill";
   let b = 0;
-  if (t.cpl_max && ad.cpl !== null && ad.cpl > t.cpl_max) b++;
-  if (t.ctr_min && ad.ctr !== null && ad.ctr < t.ctr_min) b++;
-  if (t.frequency_max && ad.frequency !== null && ad.frequency > t.frequency_max)
+  if (t.cplMax && ad.cpl !== null && ad.cpl > t.cplMax) b++;
+  if (t.ctrMin && ad.ctr !== null && ad.ctr < t.ctrMin) b++;
+  if (t.frequencyMax && ad.frequency !== null && ad.frequency > t.frequencyMax)
     b++;
   if (b > 0) return "warning";
   if (ad.cpl === null && ad.ctr === null) return "neutral";
@@ -154,27 +154,23 @@ export default function AdsPage() {
       setBrands(data.brands || []);
       const rawAds = (data.ads || []) as Record<string, unknown>[];
       setAds(
-        rawAds.map((ad) => {
-          const adSet = ad.ad_sets as { name: string; campaigns?: { name: string } } | null;
-          const brand = ad.brands as { name: string } | null;
-          return {
-            id: ad.id as string,
-            name: ad.name as string,
-            status: ad.status as string,
-            cpl: (ad.cpl as number | null) ?? null,
-            ctr: (ad.ctr as number | null) ?? null,
-            frequency: (ad.frequency as number | null) ?? null,
-            spend: (ad.spend as number) || 0,
-            impressions: (ad.impressions as number) || 0,
-            clicks: (ad.clicks as number) || 0,
-            leads: (ad.leads as number) || 0,
-            meta_ad_id: ad.meta_ad_id as string,
-            brand_id: ad.brand_id as string,
-            brand_name: brand?.name,
-            ad_set_name: adSet?.name,
-            campaign_name: adSet?.campaigns?.name,
-          };
-        }),
+        rawAds.map((ad) => ({
+          id: ad.id as string,
+          name: ad.name as string,
+          status: ad.status as string,
+          cpl: (ad.cpl as number | null) ?? null,
+          ctr: (ad.ctr as number | null) ?? null,
+          frequency: (ad.frequency as number | null) ?? null,
+          spend: (ad.spend as number) || 0,
+          impressions: (ad.impressions as number) || 0,
+          clicks: (ad.clicks as number) || 0,
+          leads: (ad.leads as number) || 0,
+          metaAdId: ad.metaAdId as string,
+          brandId: ad.brandId as string,
+          brandName: (ad.brandName as string | null) ?? undefined,
+          adSetName: (ad.adSetName as string | null) ?? undefined,
+          campaignName: (ad.campaignName as string | null) ?? undefined,
+        })),
       );
     } catch {
       // noop
@@ -221,14 +217,14 @@ export default function AdsPage() {
   function getThresholds(bid: string) {
     return (
       brands.find((b) => b.id === bid)?.config?.thresholds || {
-        cpl_max: null,
-        ctr_min: null,
-        frequency_max: null,
+        cplMax: null,
+        ctrMin: null,
+        frequencyMax: null,
       }
     );
   }
   function getCostLabel(bid: string) {
-    return brands.find((b) => b.id === bid)?.config?.cost_metric?.label || "CPL";
+    return brands.find((b) => b.id === bid)?.config?.costMetric?.label || "CPL";
   }
 
   const displayCostLabel =
@@ -240,7 +236,7 @@ export default function AdsPage() {
 
   const adsWithHealth = ads.map((ad) => ({
     ad,
-    health: getAdHealth(ad, getThresholds(ad.brand_id)),
+    health: getAdHealth(ad, getThresholds(ad.brandId)),
   }));
 
   const filteredAds = adsWithHealth.filter((entry) => {
@@ -264,12 +260,33 @@ export default function AdsPage() {
     }
   });
 
+  // Summary totals for the dashboard strip — computed from filteredAds so it
+  // reflects whatever the user is currently looking at (date range, brand,
+  // health filter all apply).
+  const summary = filteredAds.reduce(
+    (acc, { ad }) => {
+      acc.spend += ad.spend;
+      acc.leads += ad.leads;
+      acc.impressions += ad.impressions;
+      acc.clicks += ad.clicks;
+      if (ad.frequency !== null) {
+        acc.freqSum += ad.frequency;
+        acc.freqCount += 1;
+      }
+      return acc;
+    },
+    { spend: 0, leads: 0, impressions: 0, clicks: 0, freqSum: 0, freqCount: 0 },
+  );
+  const totalCpl = summary.leads > 0 ? summary.spend / summary.leads : null;
+  const totalCtr = summary.impressions > 0 ? (summary.clicks / summary.impressions) * 100 : null;
+  const avgFreq = summary.freqCount > 0 ? summary.freqSum / summary.freqCount : null;
+
   const grouped = groupBy(sortedAds, (e) => {
     switch (groupKey) {
       case "brand":
-        return e.ad.brand_name || "Unknown";
+        return e.ad.brandName || "Unknown";
       case "campaign":
-        return e.ad.campaign_name || "Uncategorized";
+        return e.ad.campaignName || "Uncategorized";
       case "health":
         return HEALTH_STYLES[e.health].label;
       case "none":
@@ -428,6 +445,35 @@ export default function AdsPage() {
         </span>
       </div>
 
+      {/* Dashboard summary — totals across filteredAds */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <SummaryCard
+          label="Spend"
+          value={`RM${summary.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+          sub={`${filteredAds.length} ad${filteredAds.length === 1 ? "" : "s"}`}
+        />
+        <SummaryCard
+          label="Leads"
+          value={summary.leads.toLocaleString()}
+          sub={`across ${filteredAds.length} ad${filteredAds.length === 1 ? "" : "s"}`}
+        />
+        <SummaryCard
+          label={displayCostLabel}
+          value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
+          sub="weighted (spend / leads)"
+        />
+        <SummaryCard
+          label="CTR"
+          value={totalCtr !== null ? `${totalCtr.toFixed(2)}%` : "—"}
+          sub="weighted (clicks / impressions)"
+        />
+        <SummaryCard
+          label="Frequency"
+          value={avgFreq !== null ? avgFreq.toFixed(2) : "—"}
+          sub={`avg of ${summary.freqCount} ad${summary.freqCount === 1 ? "" : "s"}`}
+        />
+      </div>
+
       {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -486,20 +532,20 @@ export default function AdsPage() {
                       <tbody>
                         {rows.map(({ ad, health }) => {
                           const hc = HEALTH_STYLES[health];
-                          const cl = getCostLabel(ad.brand_id);
-                          const t = getThresholds(ad.brand_id);
+                          const cl = getCostLabel(ad.brandId);
+                          const t = getThresholds(ad.brandId);
                           const cplW =
-                            t.cpl_max !== null &&
+                            t.cplMax !== null &&
                             ad.cpl !== null &&
-                            ad.cpl > t.cpl_max;
+                            ad.cpl > t.cplMax;
                           const ctrW =
-                            t.ctr_min !== null &&
+                            t.ctrMin !== null &&
                             ad.ctr !== null &&
-                            ad.ctr < t.ctr_min;
+                            ad.ctr < t.ctrMin;
                           const freqW =
-                            t.frequency_max !== null &&
+                            t.frequencyMax !== null &&
                             ad.frequency !== null &&
-                            ad.frequency > t.frequency_max;
+                            ad.frequency > t.frequencyMax;
                           const acting = actionLoading === ad.id;
 
                           return (
@@ -515,10 +561,10 @@ export default function AdsPage() {
                                   {ad.name}
                                 </div>
                                 <div className="text-[11px] text-gray-400 truncate max-w-[240px]">
-                                  {ad.brand_name && (
-                                    <span>{ad.brand_name} &middot; </span>
+                                  {ad.brandName && (
+                                    <span>{ad.brandName} &middot; </span>
                                   )}
-                                  {ad.campaign_name || "—"}
+                                  {ad.campaignName || "—"}
                                 </div>
                               </td>
                               <td className="px-3 py-2.5">
@@ -636,4 +682,16 @@ function groupBy<T>(
     out[k].push(it);
   }
   return out;
+}
+
+function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <Card>
+      <CardContent className="py-3 px-4">
+        <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">{label}</p>
+        <p className="text-xl font-semibold text-gray-900 mt-0.5 tabular-nums">{value}</p>
+        {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
+      </CardContent>
+    </Card>
+  );
 }
