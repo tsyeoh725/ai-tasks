@@ -46,9 +46,12 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 
-# Migration assets (drizzle-orm migrator runs from these)
+# Migration assets — drizzle-orm gets bundled into Next's server chunks and
+# isn't exposed in standalone/node_modules, so the migrate script needs it
+# copied explicitly. better-sqlite3 (native) is already in standalone.
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder /app/node_modules/drizzle-orm ./node_modules/drizzle-orm
 
 # Entrypoint
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
