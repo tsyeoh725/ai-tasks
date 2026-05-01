@@ -5,6 +5,7 @@ import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
+import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 
 // POST /api/meta/sync  { brandId, startDate?, endDate? }
 // Note: our sync implementation uses a trailing-window (dateRange in days) rather than
@@ -28,13 +29,14 @@ export async function POST(req: Request) {
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   if (brand.userId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const accessToken =
-    (brand as unknown as { metaAccessToken?: string | null }).metaAccessToken ||
-    process.env.META_ACCESS_TOKEN;
+  const accessToken = await resolveMetaAccessToken(brand);
   if (!accessToken) {
     return NextResponse.json(
-      { skipped: true, reason: "No Meta access token available" },
-      { status: 200 },
+      {
+        error: "No Meta access token configured",
+        hint: "Add your Meta Graph API access token under Settings → Meta Ads.",
+      },
+      { status: 412 },
     );
   }
 

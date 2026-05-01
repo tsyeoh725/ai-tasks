@@ -3,6 +3,7 @@ import { brands, metaAds, marketingAuditLog } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { v4 as uuid } from "uuid";
 import * as metaApi from "@/lib/marketing/meta-api";
 
@@ -32,13 +33,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const accessToken =
-    (brand as unknown as { metaAccessToken?: string | null }).metaAccessToken ||
-    process.env.META_ACCESS_TOKEN;
+  const accessToken = await resolveMetaAccessToken(brand);
   if (!accessToken) {
     return NextResponse.json(
-      { error: "No Meta access token configured for this brand" },
-      { status: 400 },
+      {
+        error: "No Meta access token configured",
+        hint: "Add your Meta Graph API access token under Settings → Meta Ads.",
+      },
+      { status: 412 },
     );
   }
 

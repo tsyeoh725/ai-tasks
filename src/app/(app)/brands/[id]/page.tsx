@@ -129,33 +129,53 @@ export default function BrandDetailPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandId: id }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setStatus({ kind: "success", message: "Resync complete" });
+        const s = data?.synced;
+        const summary = s
+          ? ` (${s.campaigns ?? 0} campaigns, ${s.adSets ?? 0} ad sets, ${s.ads ?? 0} ads)`
+          : "";
+        setStatus({ kind: "success", message: `Resync complete${summary}` });
       } else {
-        setStatus({ kind: "error", message: "Resync failed" });
+        setStatus({
+          kind: "error",
+          message: data?.hint
+            ? `${data.error || "Resync failed"} — ${data.hint}`
+            : data?.error || "Resync failed",
+        });
       }
     } catch {
-      setStatus({ kind: "error", message: "Resync failed" });
+      setStatus({ kind: "error", message: "Resync failed (network error)" });
     }
     setSyncing(false);
   }
 
   async function handlePullAll() {
     setPulling(true);
-    setStatus({ kind: "info", message: "Pulling full history..." });
+    setStatus({ kind: "info", message: "Pulling full history (this can take several minutes)..." });
     try {
       const res = await fetch("/api/meta/pull-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandId: id }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setStatus({ kind: "success", message: "Historical pull complete" });
+        const s = data?.synced;
+        const summary = s
+          ? ` (${s.campaigns ?? 0} campaigns, ${s.adSets ?? 0} ad sets, ${s.ads ?? 0} ads)`
+          : "";
+        setStatus({ kind: "success", message: `Historical pull complete${summary}` });
       } else {
-        setStatus({ kind: "error", message: "Historical pull failed" });
+        setStatus({
+          kind: "error",
+          message: data?.hint
+            ? `${data.error || "Historical pull failed"} — ${data.hint}`
+            : data?.error || "Historical pull failed",
+        });
       }
     } catch {
-      setStatus({ kind: "error", message: "Historical pull failed" });
+      setStatus({ kind: "error", message: "Historical pull failed (network error)" });
     }
     setPulling(false);
   }
