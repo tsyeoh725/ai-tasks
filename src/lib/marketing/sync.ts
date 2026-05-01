@@ -366,6 +366,22 @@ export type InsightsSyncResult = {
   failedChunks: Array<{ since: string; until: string; error: string }>;
 };
 
+export type InsightsProgress = {
+  /** Called once with the chunk plan before the first fetch. */
+  onPlan?: (chunks: Array<{ since: string; until: string }>) => void;
+  /** Called immediately before each chunk fetch. */
+  onChunkStart?: (index: number, total: number, chunk: { since: string; until: string }) => void;
+  /** Called after each chunk completes, succeeded or failed. */
+  onChunkEnd?: (
+    index: number,
+    total: number,
+    chunk: { since: string; until: string },
+    result: { ok: true; rows: number } | { ok: false; error: string },
+  ) => void;
+  /** Called after the per-chunk loop finishes, before the upserts run. */
+  onPersistStart?: (totalAds: number, totalDailyRows: number) => void;
+};
+
 export async function syncAdsWithInsights(
   metaAccountId: string,
   brandId: string,
@@ -373,6 +389,7 @@ export async function syncAdsWithInsights(
   accessToken: string,
   dateRange: number = 7,
   costActionType: string = "lead",
+  progress: InsightsProgress = {},
 ): Promise<InsightsSyncResult> {
   // 90-day chunks: Meta's daily-breakdown (`time_increment=1`) limit is 90
   // days per request for many ad accounts. 180 was too aggressive and would
@@ -412,12 +429,15 @@ export async function syncAdsWithInsights(
     }
   }
 
+  progress.onPlan?.(chunks);
+
   let allInsights: MetaInsight[] = [];
   let chunksSucceeded = 0;
   const failedChunks: InsightsSyncResult["failedChunks"] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    progress.onChunkStart?.(i, chunks.length, chunk);
     const timeRange = JSON.stringify(chunk);
     try {
       const chunkInsights = (await fetchAllPages(`act_${metaAccountId}/insights`, accessToken, {
@@ -429,6 +449,7 @@ export async function syncAdsWithInsights(
       })) as MetaInsight[];
       allInsights = allInsights.concat(chunkInsights);
       chunksSucceeded += 1;
+      progress.onChunkEnd?.(i, chunks.length, chunk, { ok: true, rows: chunkInsights.length });
       log("info", "meta_api", `chunk ${i + 1}/${chunks.length} ok`, {
         since: chunk.since,
         until: chunk.until,
@@ -437,6 +458,7 @@ export async function syncAdsWithInsights(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       failedChunks.push({ since: chunk.since, until: chunk.until, error: msg });
+      progress.onChunkEnd?.(i, chunks.length, chunk, { ok: false, error: msg });
       log("error", "meta_api", `chunk ${i + 1}/${chunks.length} failed`, {
         since: chunk.since,
         until: chunk.until,
@@ -524,6 +546,8 @@ export async function syncAdsWithInsights(
       frequency,
     });
   }
+
+  progress.onPersistStart?.(adTotals.size, dailyRows.length);
 
   // Upsert the aggregated totals onto metaAds.
   for (const [metaAdId, totals] of adTotals) {

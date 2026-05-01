@@ -230,33 +230,114 @@ export default function BrandDetailPage({
 
   async function handlePullAll() {
     setPulling(true);
-    setStatus({
-      kind: "info",
-      message:
-        "Pulling 36 months in 90-day chunks. This usually takes 2-10 minutes — keep this tab open.",
-    });
+    setStatus({ kind: "info", message: "Connecting to Meta…" });
+
+    let chunksTotal = 0;
+    let chunksDone = 0;
+    let chunksFailed = 0;
+
     try {
       const res = await fetch("/api/meta/pull-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ brandId: id }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setStatus({
-          kind: data?.synced?.chunksFailed ? "info" : "success",
-          message: formatSyncSummary("Historical pull", data?.synced),
-        });
-      } else {
-        setStatus({
-          kind: "error",
-          message: data?.hint
-            ? `${data.error || "Historical pull failed"} — ${data.hint}`
-            : data?.error || "Historical pull failed",
-        });
+
+      // Non-streaming error responses (auth / token-missing) come back as
+      // a single JSON object with `error` + optional `hint`. Detect via
+      // Content-Type — if it's not ndjson, parse once and bail.
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("ndjson")) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setStatus({
+            kind: "error",
+            message: data?.hint
+              ? `${data.error || "Historical pull failed"} — ${data.hint}`
+              : data?.error || "Historical pull failed",
+          });
+        }
+        setPulling(false);
+        return;
       }
-    } catch {
-      setStatus({ kind: "error", message: "Historical pull failed (network error)" });
+
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let event: Record<string, unknown>;
+          try {
+            event = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+          switch (event.type) {
+            case "plan": {
+              chunksTotal = (event.chunks as number) ?? 0;
+              setStatus({
+                kind: "info",
+                message: `Plan: ${event.campaigns} campaigns, ${event.adSets} ad sets, ${chunksTotal} insight chunks (${event.costActionType}). Pulling chunk 1/${chunksTotal}…`,
+              });
+              break;
+            }
+            case "chunk": {
+              if (event.phase === "start") {
+                setStatus({
+                  kind: "info",
+                  message: `Chunk ${(event.index as number) + 1}/${event.total}: ${event.since} → ${event.until} (${chunksFailed > 0 ? `${chunksFailed} failed so far` : "all good"})`,
+                });
+              } else if (event.phase === "end") {
+                chunksDone += 1;
+                if (event.ok === false) chunksFailed += 1;
+                const next = (event.index as number) + 2;
+                if (next <= (event.total as number)) {
+                  setStatus({
+                    kind: "info",
+                    message: `Done ${chunksDone}/${event.total}${chunksFailed ? ` (${chunksFailed} failed)` : ""}. Up next: chunk ${next}/${event.total}…`,
+                  });
+                }
+              }
+              break;
+            }
+            case "persist": {
+              setStatus({
+                kind: "info",
+                message: `Writing ${event.ads} ads + ${event.dailyRows} daily-insight rows to the database…`,
+              });
+              break;
+            }
+            case "complete": {
+              const synced = event.synced as SyncSummary;
+              setStatus({
+                kind: synced?.chunksFailed ? "info" : "success",
+                message: formatSyncSummary("Historical pull", synced),
+              });
+              break;
+            }
+            case "error": {
+              setStatus({
+                kind: "error",
+                message: `Historical pull failed — ${event.error}`,
+              });
+              break;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setStatus({
+        kind: "error",
+        message: `Historical pull failed (${err instanceof Error ? err.message : "network error"})`,
+      });
     }
     setPulling(false);
   }
