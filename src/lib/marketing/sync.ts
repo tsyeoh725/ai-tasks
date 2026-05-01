@@ -593,17 +593,27 @@ export async function syncAdsWithInsights(
   }
 
   // Refresh status for any ads that Meta has turned off/on.
-  const statusAds = await fetchAllPages(`act_${metaAccountId}/ads`, accessToken, {
-    fields: "id,status",
-  });
-  for (const raw of statusAds as Array<Record<string, string>>) {
-    const ad = await db.query.metaAds.findFirst({
-      where: and(eq(metaAds.brandId, brandId), eq(metaAds.metaAdId, raw.id)),
+  // This is a best-effort enrichment — the actual insight data is already
+  // safely written above. If Meta returns a transient 5xx (code 1) or
+  // service-unavailable (code 2) here, we should still count the pull as
+  // a success rather than throwing the whole thing away.
+  try {
+    const statusAds = await fetchAllPages(`act_${metaAccountId}/ads`, accessToken, {
+      fields: "id,status",
     });
-    if (!ad) continue;
-    if (ad.status !== raw.status) {
-      await db.update(metaAds).set({ status: raw.status }).where(eq(metaAds.id, ad.id));
+    for (const raw of statusAds as Array<Record<string, string>>) {
+      const ad = await db.query.metaAds.findFirst({
+        where: and(eq(metaAds.brandId, brandId), eq(metaAds.metaAdId, raw.id)),
+      });
+      if (!ad) continue;
+      if (ad.status !== raw.status) {
+        await db.update(metaAds).set({ status: raw.status }).where(eq(metaAds.id, ad.id));
+      }
     }
+  } catch (err) {
+    log("warn", "meta_api", "ad-status refresh failed (insight data was still saved)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   return {

@@ -68,8 +68,21 @@ export async function POST(req: Request) {
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
+      let closed = false;
       const send = (event: Record<string, unknown>) => {
+        if (closed) return;
         controller.enqueue(enc.encode(JSON.stringify(event) + "\n"));
+      };
+
+      // Keep-alive pings every 15s during silent stretches (persist phase,
+      // meta retries) so Cloudflare / proxies don't kill the connection
+      // and the browser doesn't see "(network error)".
+      const heartbeat = setInterval(() => send({ type: "ping", t: Date.now() }), 15000);
+      const finish = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
+        controller.close();
       };
 
       try {
@@ -130,10 +143,10 @@ export async function POST(req: Request) {
             failedChunks: insights.failedChunks,
           },
         });
-        controller.close();
+        finish();
       } catch (err) {
         send({ type: "error", error: err instanceof Error ? err.message : "Pull failed" });
-        controller.close();
+        finish();
       }
     },
   });

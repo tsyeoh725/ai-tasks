@@ -281,6 +281,10 @@ export default function BrandDetailPage({
             continue;
           }
           switch (event.type) {
+            case "ping": {
+              // Keep-alive heartbeat from the server — no UI update needed.
+              break;
+            }
             case "plan": {
               chunksTotal = (event.chunks as number) ?? 0;
               setStatus({
