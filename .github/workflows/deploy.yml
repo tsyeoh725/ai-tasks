@@ -57,21 +57,18 @@ jobs:
   deploy:
     name: Deploy to server
     needs: build
-    runs-on: ubuntu-latest
+    # Self-hosted runner on the server itself — no SSH hop needed
+    runs-on: [self-hosted, aitasks]
     steps:
-      - name: SSH into server and roll the image
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          port: ${{ secrets.SSH_PORT }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            set -e
-            cd /srv/ai-tasks
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker compose pull
-            docker compose up -d --remove-orphans
-            docker image prune -f
-            echo "--- post-deploy status ---"
-            docker compose ps
+      - name: Pull image and roll container
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          cd /srv/ai-tasks
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker compose pull
+          docker compose up -d --remove-orphans
+          docker image prune -f
+          echo "--- post-deploy status ---"
+          docker compose ps
