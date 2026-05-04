@@ -89,7 +89,11 @@ export async function GET(req: Request) {
     aggregated.set(row.adId, existing);
   }
 
-  // If no daily data, fall back to the aggregated totals already on metaAds.
+  // When a date filter is supplied, the result must come from daily insights —
+  // never the lifetime totals stored on metaAds. Falling back to lifetime when
+  // the picked range has no data (e.g. Meta hasn't aggregated today yet) made
+  // a 2-day filter silently render a lifetime answer.
+  const dateFilterActive = !!(startDate || endDate);
   const adIdsWithDaily = Array.from(aggregated.keys());
   let adRowConditions = [
     brandId && brandId !== "all"
@@ -99,8 +103,13 @@ export async function GET(req: Request) {
   if (statusFilter && statusFilter !== "all") {
     adRowConditions.push(eq(metaAds.status, statusFilter));
   }
-  // If we have daily data, narrow to those ad IDs; otherwise show all ads for the brand.
-  if (adIdsWithDaily.length > 0) {
+  if (dateFilterActive) {
+    if (adIdsWithDaily.length === 0) {
+      return NextResponse.json({ ads: [], brands: userBrands, adSets: [], campaigns: [] });
+    }
+    adRowConditions = [inArray(metaAds.id, adIdsWithDaily), ...adRowConditions];
+  } else if (adIdsWithDaily.length > 0) {
+    // No date filter: still prefer rows that have any daily data when present.
     adRowConditions = [inArray(metaAds.id, adIdsWithDaily), ...adRowConditions];
   }
 
@@ -156,15 +165,17 @@ export async function GET(req: Request) {
   const enriched = adRows
     .map((ad) => {
       const agg = aggregated.get(ad.id);
-      const spend = agg?.spend ?? ad.spend ?? 0;
-      const impressions = agg?.impressions ?? ad.impressions ?? 0;
-      const clicks = agg?.clicks ?? ad.clicks ?? 0;
-      const leads = agg?.leads ?? ad.leads ?? 0;
+      // When a date filter is active, ignore the lifetime totals on the ad row
+      // and report only what came back from daily insights for that window.
+      const spend = dateFilterActive ? agg?.spend ?? 0 : agg?.spend ?? ad.spend ?? 0;
+      const impressions = dateFilterActive ? agg?.impressions ?? 0 : agg?.impressions ?? ad.impressions ?? 0;
+      const clicks = dateFilterActive ? agg?.clicks ?? 0 : agg?.clicks ?? ad.clicks ?? 0;
+      const leads = dateFilterActive ? agg?.leads ?? 0 : agg?.leads ?? ad.leads ?? 0;
       const days = agg?.days ?? 0;
 
-      const cpl = leads > 0 ? spend / leads : ad.cpl ?? null;
-      const ctr = impressions > 0 ? (clicks / impressions) * 100 : ad.ctr ?? null;
-      const frequency = days > 0 ? (agg?.freqSum ?? 0) / days : ad.frequency ?? null;
+      const cpl = leads > 0 ? spend / leads : dateFilterActive ? null : ad.cpl ?? null;
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : dateFilterActive ? null : ad.ctr ?? null;
+      const frequency = days > 0 ? (agg?.freqSum ?? 0) / days : dateFilterActive ? null : ad.frequency ?? null;
 
       const healthScore = computeHealth(cpl, ctr, frequency, ad.brandId);
 
