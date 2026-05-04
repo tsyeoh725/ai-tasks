@@ -55,7 +55,12 @@ export async function GET(req: Request) {
   }
   if (endDate) {
     const end = new Date(endDate);
-    if (!Number.isNaN(end.getTime())) conditions.push(lte(decisionJournal.createdAt, end));
+    if (!Number.isNaN(end.getTime())) {
+      // endDate is a date string like "2026-05-04" → midnight UTC. Include the
+      // full day so rows created later on the same date aren't dropped.
+      end.setHours(23, 59, 59, 999);
+      conditions.push(lte(decisionJournal.createdAt, end));
+    }
   }
 
   const entries = await db.query.decisionJournal.findMany({
