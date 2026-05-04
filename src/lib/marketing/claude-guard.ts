@@ -1,6 +1,7 @@
 // AI Guard — takes a Recommendation and returns a structured verdict.
 // Ported from jarvis/src/lib/services/claude-client.ts. Uses @anthropic-ai/sdk.
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicKey } from "@/lib/app-config";
 
 // --- Shared types (mirrored from Jarvis) ---
 
@@ -67,14 +68,20 @@ export interface AgentMemoryEntry {
 
 // --- Client ---
 
-let client: Anthropic | null = null;
+// Cache the client per-API-key so a Settings rotation invalidates the old one
+// instead of holding onto a stale handle for the lifetime of the process.
+let cachedClient: { key: string; client: Anthropic } | null = null;
 
-function getClient(): Anthropic {
-  if (!client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
-    client = new Anthropic({ apiKey });
+async function getClient(): Promise<Anthropic> {
+  const apiKey = await getAnthropicKey();
+  if (!apiKey) {
+    throw new Error(
+      "Anthropic API key not configured. Add one under Settings → AI, or set ANTHROPIC_API_KEY in the env.",
+    );
   }
+  if (cachedClient && cachedClient.key === apiKey) return cachedClient.client;
+  const client = new Anthropic({ apiKey });
+  cachedClient = { key: apiKey, client };
   return client;
 }
 
@@ -156,7 +163,7 @@ export async function evaluateRecommendation(
   brandConfig: BrandConfig,
   memoryEntries: AgentMemoryEntry[],
 ): Promise<GuardVerdict> {
-  const anthropic = getClient();
+  const anthropic = await getClient();
 
   const userMessage = `Evaluate this ad management recommendation:
 
@@ -218,7 +225,7 @@ export async function generateWeeklySummary(
     createdAt: Date | string;
   }>,
 ): Promise<string> {
-  const anthropic = getClient();
+  const anthropic = await getClient();
 
   const decisionsText = decisions
     .map((d) => {
