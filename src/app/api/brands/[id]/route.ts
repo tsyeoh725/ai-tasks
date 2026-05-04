@@ -1,6 +1,6 @@
 import { db } from "@/db";
-import { brands } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { brands, projects, teamMembers } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { serializeBrand } from "../route";
@@ -31,7 +31,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!user) return unauthorized();
 
   const { id } = await params;
-  const { error } = await loadAccessible(id, user.id);
+  const { brand, error } = await loadAccessible(id, user.id);
   if (error) return error;
 
   const body = (await req.json()) as Record<string, unknown>;
@@ -47,7 +47,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     updateData.projectId = body.projectId;
   }
 
+  // Workspace move: brand.teamId of `null` = personal, a team uuid = team workspace.
+  // The linked project moves with the brand so its tasks land in the same scope.
+  let projectMovedTo: string | null | undefined = undefined;
+  if (body.teamId === null || typeof body.teamId === "string") {
+    const targetTeamId = body.teamId as string | null;
+    if (targetTeamId) {
+      const membership = await db.query.teamMembers.findFirst({
+        where: and(eq(teamMembers.teamId, targetTeamId), eq(teamMembers.userId, user.id)),
+      });
+      if (!membership) {
+        return NextResponse.json({ error: "Not a member of target team" }, { status: 403 });
+      }
+    }
+    updateData.teamId = targetTeamId;
+    if (brand?.projectId) projectMovedTo = targetTeamId;
+  }
+
   await db.update(brands).set(updateData).where(eq(brands.id, id));
+  if (projectMovedTo !== undefined && brand?.projectId) {
+    await db.update(projects).set({ teamId: projectMovedTo, updatedAt: new Date() }).where(eq(projects.id, brand.projectId));
+  }
 
   const updated = await db.query.brands.findFirst({ where: eq(brands.id, id) });
   return NextResponse.json(updated ? serializeBrand(updated) : null);

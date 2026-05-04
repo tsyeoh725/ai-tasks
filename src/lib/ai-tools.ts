@@ -774,7 +774,34 @@ export function getCommandTools(userId: string) {
         const userBrands = await db.query.brands.findMany({
           where: brandsAccessibleWhere(ws, userId),
         });
-        return { brands: userBrands.map(b => ({ id: b.id, name: b.name, metaAccountId: b.metaAccountId, projectId: b.projectId })) };
+        return { brands: userBrands.map(b => ({ id: b.id, name: b.name, metaAccountId: b.metaAccountId, projectId: b.projectId, teamId: b.teamId ?? null })) };
+      },
+    }),
+
+    moveBrandToTeam: tool({
+      description: "Move an ad brand to a team workspace, or back to personal. The brand's linked ai-tasks project moves with it. Pass teamId=null (or omit) to move to personal.",
+      inputSchema: z.object({
+        brandId: z.string(),
+        teamId: z.string().nullable().optional().describe("Target team id, or null to move to personal."),
+      }),
+      execute: async ({ brandId, teamId }) => {
+        const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
+        if (!brand) return { error: "Brand not found" };
+        if (!(await canAccessBrand(brand, userId))) return { error: "Forbidden — you don't have access to this brand" };
+
+        const target: string | null = teamId ?? null;
+        if (target) {
+          const membership = await db.query.teamMembers.findFirst({
+            where: and(eq(teamMembers.teamId, target), eq(teamMembers.userId, userId)),
+          });
+          if (!membership) return { error: "You're not a member of the target team" };
+        }
+
+        await db.update(brands).set({ teamId: target, updatedAt: new Date() }).where(eq(brands.id, brandId));
+        if (brand.projectId) {
+          await db.update(projects).set({ teamId: target, updatedAt: new Date() }).where(eq(projects.id, brand.projectId));
+        }
+        return { success: true, brand: brand.name, movedTo: target ? "team" : "personal", teamId: target };
       },
     }),
 

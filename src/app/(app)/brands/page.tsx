@@ -45,16 +45,21 @@ type Brand = {
   config: BrandConfig;
   isActive: boolean;
   projectId?: string | null;
+  teamId?: string | null;
 };
+
+type Team = { id: string; name: string };
 
 export default function BrandsPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [accountId, setAccountId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
 
   const fetchBrands = useCallback(async () => {
     try {
@@ -67,10 +72,41 @@ export default function BrandsPage() {
     setLoading(false);
   }, []);
 
+  const fetchTeams = useCallback(async () => {
+    try {
+      const res = await fetch("/api/teams");
+      const data = await res.json();
+      setTeams((data.teams || []).map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })));
+    } catch {
+      // noop
+    }
+  }, []);
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount; not migrating to Suspense
     fetchBrands();
-  }, [fetchBrands]);
+    fetchTeams();
+  }, [fetchBrands, fetchTeams]);
+
+  async function handleMove(brandId: string, teamId: string | null) {
+    setMovingId(brandId);
+    try {
+      const res = await fetch(`/api/brands/${brandId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teamId }),
+      });
+      if (res.ok) {
+        // Refetch — the brand may now be hidden if it left the active workspace.
+        await fetchBrands();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Failed to move brand");
+      }
+    } finally {
+      setMovingId(null);
+    }
+  }
 
   async function handleCreate() {
     if (!name || !accountId) {
@@ -221,6 +257,32 @@ export default function BrandsPage() {
                       <Badge variant="warning">Spend Cap</Badge>
                     )}
                   </div>
+
+                  {teams.length > 0 && (
+                    <div
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                      className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2"
+                    >
+                      <span className="text-[11px] text-gray-400 uppercase tracking-wide">Workspace</span>
+                      <select
+                        value={brand.teamId ?? ""}
+                        disabled={movingId === brand.id}
+                        onChange={(e) => {
+                          const next = e.target.value || null;
+                          if (next === (brand.teamId ?? null)) return;
+                          handleMove(brand.id, next);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-1 text-xs border border-gray-200 rounded-md px-2 py-1 bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">Personal</option>
+                        {teams.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                      {movingId === brand.id && <span className="text-[11px] text-gray-400">Moving…</span>}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </Link>
