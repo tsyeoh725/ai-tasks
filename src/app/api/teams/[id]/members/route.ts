@@ -1,9 +1,10 @@
 import { db } from "@/db";
-import { teamMembers, users } from "@/db/schema";
+import { teamMembers, teams, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { notifyTeamMemberAdded } from "@/lib/notifications";
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
@@ -52,6 +53,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     role: "member",
     joinedAt: new Date(),
   });
+
+  // Notify the new member so they actually find out (the team won't appear
+  // in their workspace dropdown until their tab refreshes / picks up the
+  // updated /api/teams response).
+  const team = await db.query.teams.findFirst({ where: eq(teams.id, teamId) });
+  if (team) {
+    await notifyTeamMemberAdded(
+      targetUser.id,
+      user.name || user.email || "A teammate",
+      team.name,
+      teamId,
+    );
+  }
 
   return NextResponse.json({ success: true, user: { id: targetUser.id, name: targetUser.name, email: targetUser.email } }, { status: 201 });
 }

@@ -5,7 +5,7 @@ import { sendPushToUser, sendPushToUsers } from "@/lib/push";
 
 type CreateNotificationParams = {
   userId: string;
-  type: "assigned" | "mentioned" | "commented" | "status_changed" | "due_soon" | "completed";
+  type: "assigned" | "mentioned" | "commented" | "status_changed" | "due_soon" | "completed" | "team_added";
   title: string;
   message?: string;
   entityType?: "task" | "project" | "team";
@@ -15,6 +15,7 @@ type CreateNotificationParams = {
 function pushUrlFor(entityType?: string, entityId?: string) {
   if (entityType === "task" && entityId) return `/tasks/${entityId}`;
   if (entityType === "project" && entityId) return `/projects/${entityId}`;
+  if (entityType === "team" && entityId) return `/teams/${entityId}`;
   return "/inbox";
 }
 
@@ -103,5 +104,25 @@ export async function notifyTaskComment(
     title: `${commenterName} commented on "${taskTitle}"`,
     entityType: "task",
     entityId: taskId,
+  });
+}
+
+/**
+ * Notify when a user is added to a team. Sent to the new member so they
+ * find out and can switch into that workspace.
+ */
+export async function notifyTeamMemberAdded(
+  newMemberUserId: string,
+  inviterName: string,
+  teamName: string,
+  teamId: string,
+) {
+  await createNotification({
+    userId: newMemberUserId,
+    type: "team_added",
+    title: `${inviterName} added you to ${teamName}`,
+    message: `Switch to ${teamName} from the workspace dropdown to see shared projects and tasks.`,
+    entityType: "team",
+    entityId: teamId,
   });
 }

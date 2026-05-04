@@ -209,12 +209,18 @@ export function Sidebar() {
     // are workspace-scoped on the server. Teams list is always all-of-mine.
   }, [workspace]);
 
-  // Teams list is independent of which workspace is active.
+  // Teams list is independent of which workspace is active. Refetch on
+  // window focus so a newly-added membership shows up without a hard reload.
   useEffect(() => {
-    fetch("/api/teams")
-      .then((r) => r.json())
-      .then((data) => setTeams(data.teams || []))
-      .catch(() => {});
+    function loadTeams() {
+      fetch("/api/teams")
+        .then((r) => r.json())
+        .then((data) => setTeams(data.teams || []))
+        .catch(() => {});
+    }
+    loadTeams();
+    window.addEventListener("focus", loadTeams);
+    return () => window.removeEventListener("focus", loadTeams);
   }, []);
 
   return (

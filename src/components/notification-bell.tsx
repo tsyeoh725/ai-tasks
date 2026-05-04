@@ -98,6 +98,7 @@ export function NotificationBell() {
     status_changed: "\u{1F504}",
     due_soon: "\u{23F0}",
     completed: "\u{2705}",
+    team_added: "\u{1F465}", // 👥
   };
 
   // Group by Today / Yesterday / Earlier

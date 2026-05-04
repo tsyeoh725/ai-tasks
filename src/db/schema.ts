@@ -392,7 +392,7 @@ export const activityLog = sqliteTable("activity_log", {
 export const notifications = sqliteTable("notifications", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  type: text("type", { enum: ["assigned", "mentioned", "commented", "status_changed", "due_soon", "completed", "message", "status_update"] }).notNull(),
+  type: text("type", { enum: ["assigned", "mentioned", "commented", "status_changed", "due_soon", "completed", "message", "status_update", "team_added"] }).notNull(),
   title: text("title").notNull(),
   message: text("message"),
   entityType: text("entity_type", { enum: ["task", "project", "team"] }),
