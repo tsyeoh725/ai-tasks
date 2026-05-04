@@ -20,19 +20,19 @@ type Risk = "low" | "medium" | "high";
 
 type Entry = {
   id: string;
-  brand_id: string;
-  brand_name?: string;
-  ad_id: string | null;
-  ad_name?: string;
+  brandId: string;
+  brandName?: string;
+  adId: string | null;
+  adName?: string;
   recommendation: RecommendationAction;
   reason: string;
-  guard_reasoning: string | null;
+  guardReasoning: string | null;
   confidence: number | null;
-  risk_level: Risk | null;
-  guard_verdict: Verdict;
-  action_taken: boolean;
-  action_result: Record<string, unknown> | null;
-  created_at: string;
+  riskLevel: Risk | null;
+  guardVerdict: Verdict;
+  actionTaken: boolean;
+  actionResult: Record<string, unknown> | null;
+  createdAt: string;
 };
 
 type Brand = { id: string; name: string };
@@ -89,8 +89,8 @@ export default function JournalPage() {
       setEntries(
         list.map((e: Record<string, unknown>) => ({
           ...(e as unknown as Entry),
-          brand_name: (e.brands as { name?: string } | null)?.name,
-          ad_name: (e.ads as { name?: string } | null)?.name,
+          brandName: (e.brand as { name?: string } | null)?.name,
+          adName: (e.ad as { name?: string } | null)?.name,
         })),
       );
     } catch {
@@ -266,15 +266,18 @@ export default function JournalPage() {
                           )}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-[11px] text-gray-500">
-                          {formatDistanceToNow(new Date(entry.created_at), {
-                            addSuffix: true,
-                          })}
+                          {(() => {
+                            const d = entry.createdAt ? new Date(entry.createdAt) : null;
+                            return d && !Number.isNaN(d.getTime())
+                              ? formatDistanceToNow(d, { addSuffix: true })
+                              : "—";
+                          })()}
                         </td>
                         <td className="px-3 py-2.5 text-gray-600">
-                          {entry.brand_name || "—"}
+                          {entry.brandName || "—"}
                         </td>
                         <td className="px-3 py-2.5 truncate max-w-[240px] text-gray-800">
-                          {entry.ad_name || entry.reason.slice(0, 50)}
+                          {entry.adName || entry.reason.slice(0, 50)}
                         </td>
                         <td className="px-3 py-2.5">
                           <Badge variant="outline">
@@ -282,15 +285,15 @@ export default function JournalPage() {
                           </Badge>
                         </td>
                         <td className="px-3 py-2.5">
-                          <Badge variant={verdictVariant[entry.guard_verdict]}>
-                            {entry.guard_verdict}
+                          <Badge variant={verdictVariant[entry.guardVerdict]}>
+                            {entry.guardVerdict}
                           </Badge>
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-700">
                           {entry.confidence !== null ? `${confidencePct}%` : "—"}
                         </td>
                         <td className="px-3 py-2.5">
-                          {entry.action_taken ? (
+                          {entry.actionTaken ? (
                             <Badge variant="success">Executed</Badge>
                           ) : (
                             <span className="text-xs text-gray-400">—</span>
@@ -310,13 +313,13 @@ export default function JournalPage() {
                                 </div>
                                 <p className="text-gray-700">{entry.reason}</p>
                               </div>
-                              {entry.guard_reasoning && (
+                              {entry.guardReasoning && (
                                 <div>
                                   <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                     AI Guard Analysis
                                   </div>
                                   <p className="text-gray-700 whitespace-pre-wrap">
-                                    {entry.guard_reasoning}
+                                    {entry.guardReasoning}
                                   </p>
                                 </div>
                               )}
@@ -328,25 +331,25 @@ export default function JournalPage() {
                                     </div>
                                     <p className="font-mono text-gray-800">{confidencePct}%</p>
                                   </div>
-                                  {entry.risk_level && (
+                                  {entry.riskLevel && (
                                     <div>
                                       <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                         Risk
                                       </div>
                                       <p className="uppercase text-gray-800">
-                                        {entry.risk_level}
+                                        {entry.riskLevel}
                                       </p>
                                     </div>
                                   )}
                                 </div>
                               )}
-                              {entry.action_result && (
+                              {entry.actionResult && (
                                 <div>
                                   <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                                     Action Result
                                   </div>
                                   <pre className="text-[11px] font-mono bg-gray-100 border border-gray-200 rounded-lg p-2 overflow-x-auto text-gray-700">
-                                    {JSON.stringify(entry.action_result, null, 2)}
+                                    {JSON.stringify(entry.actionResult, null, 2)}
                                   </pre>
                                 </div>
                               )}

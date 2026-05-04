@@ -21,25 +21,43 @@ interface TelegramCallbackQuery {
 interface TelegramUpdate {
   update_id: number;
   callback_query?: TelegramCallbackQuery;
+  message?: unknown;
+  edited_message?: unknown;
+  channel_post?: unknown;
 }
 
 export async function POST(req: Request) {
   let update: TelegramUpdate;
+  let raw: Record<string, unknown>;
   try {
-    update = (await req.json()) as TelegramUpdate;
+    raw = (await req.json()) as Record<string, unknown>;
+    update = raw as unknown as TelegramUpdate;
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
-
-  const cb = update.callback_query;
-  if (!cb || !cb.data) {
-    // Not a callback query — nothing to do. Respond 200 so Telegram doesn't retry.
-    return NextResponse.json({ ok: true });
   }
 
   const bot = getTelegramBot();
   if (!bot) {
     return NextResponse.json({ error: "Telegram bot not configured" }, { status: 500 });
+  }
+
+  // Non-callback updates (text commands like /start, /task, /digest, …) get
+  // dispatched to grammy so the handlers registered in src/lib/telegram.ts run.
+  // Callback queries (inline-keyboard Approve/Reject) keep their custom path
+  // below because grammy doesn't have those handlers wired up.
+  if (!update.callback_query) {
+    try {
+      // grammy's Update type matches the Telegram Bot API; cast through unknown.
+      await bot.handleUpdate(raw as unknown as Parameters<typeof bot.handleUpdate>[0]);
+    } catch (err) {
+      console.error("[telegram] handleUpdate failed:", err);
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  const cb = update.callback_query;
+  if (!cb.data) {
+    return NextResponse.json({ ok: true });
   }
 
   // Parse "approve:<id>" or "reject:<id>"
