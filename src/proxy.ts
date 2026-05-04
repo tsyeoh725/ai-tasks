@@ -17,7 +17,10 @@ export async function proxy(req: NextRequest) {
 
   const isPublicApi =
     req.nextUrl.pathname.startsWith("/api/f") ||
-    /^\/api\/forms\/[^/]+\/submit$/.test(req.nextUrl.pathname);
+    /^\/api\/forms\/[^/]+\/submit$/.test(req.nextUrl.pathname) ||
+    // Telegram webhook — authenticated by Telegram's signed update payload;
+    // the proxy must not bounce it to /login.
+    req.nextUrl.pathname === "/api/telegram/callback";
   const isPublicPage = req.nextUrl.pathname.startsWith("/f/");
 
   if (isApiAuth || isApiV1 || isPublicApi || isPublicPage) {
