@@ -100,6 +100,18 @@ async function fetchAllPages(
 
 function matchesActionType(metaActionType: string, configuredType: string): boolean {
   if (metaActionType === configuredType) return true;
+
+  // For "lead", mirror exactly what Meta UI's "Leads" column sums:
+  //   - exact `lead` (form-fill submissions, caught above)
+  //   - `*messaging_conversation_started*` (Messenger optimization goal)
+  // The other "lead"-named types Meta exposes (fb_pixel_lead,
+  // *_add_meta_leads, *_grouped, *_calls) are deduplicated rollups or
+  // unrelated tracking events; including them double-counts vs Meta UI.
+  if (configuredType === "lead") {
+    return /messaging_conversation_started/.test(metaActionType);
+  }
+
+  // Generic substring match for other cost metrics (purchase, link_click, …).
   const core = configuredType.replace(/^(onsite_conversion\.|offsite_conversion\.)/, "");
   if (metaActionType.includes(core)) return true;
   if (metaActionType === `${configuredType}_grouped`) return true;
