@@ -11,6 +11,8 @@ import { and, eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
 const KNOWN_KEYS = [
   "meta_access_token",
@@ -50,9 +52,10 @@ export async function GET() {
     settings.meta_access_token = undefined;
   }
 
-  // Connected brands (ad accounts) — lightweight list.
+  // Connected brands (ad accounts) — lightweight list, scoped to active workspace.
+  const ws = await resolveWorkspaceForUser(user.id);
   const connectedBrands = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     columns: { id: true, name: true, metaAccountId: true, isActive: true },
   });
 

@@ -1,9 +1,11 @@
 import { db } from "@/db";
-import { brands, projects } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { brands, projects, teamMembers } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
 // Default BrandConfig (shape mirrors BrandConfig in claude-guard.ts; persisted as JSON text).
 function defaultBrandConfig() {
@@ -33,8 +35,9 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
+  const ws = await resolveWorkspaceForUser(user.id);
   const result = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     orderBy: (b, { desc }) => [desc(b.createdAt)],
   });
 
@@ -46,7 +49,7 @@ export async function POST(req: Request) {
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, metaAccountId, config } = body ?? {};
+  const { name, metaAccountId, config, teamId: bodyTeamId } = body ?? {};
 
   if (!name || !metaAccountId) {
     return NextResponse.json(
@@ -55,18 +58,35 @@ export async function POST(req: Request) {
     );
   }
 
+  // teamId from body wins; otherwise default to whatever workspace the user is in.
+  const ws = await resolveWorkspaceForUser(user.id);
+  const resolvedTeamId: string | null =
+    (typeof bodyTeamId === "string" ? bodyTeamId : null)
+    ?? (ws.kind === "team" ? ws.teamId : null);
+
+  if (resolvedTeamId) {
+    const membership = await db.query.teamMembers.findFirst({
+      where: and(eq(teamMembers.teamId, resolvedTeamId), eq(teamMembers.userId, user.id)),
+    });
+    if (!membership) {
+      return NextResponse.json({ error: "Not a team member" }, { status: 403 });
+    }
+  }
+
   const now = new Date();
   const brandId = uuid();
   const projectId = uuid();
 
   // Create the linked project first so we can persist its id on the brand.
+  // Project shares the brand's team scope so the auto-created tasks land in
+  // the same workspace.
   await db.insert(projects).values({
     id: projectId,
     name: `${name} Ads`,
     description: null,
     color: "#6366f1",
     icon: "\u{1F3AF}", // "🎯"
-    teamId: null,
+    teamId: resolvedTeamId,
     ownerId: user.id,
     createdAt: now,
     updatedAt: now,
@@ -77,6 +97,7 @@ export async function POST(req: Request) {
   await db.insert(brands).values({
     id: brandId,
     userId: user.id,
+    teamId: resolvedTeamId,
     projectId,
     name,
     metaAccountId,

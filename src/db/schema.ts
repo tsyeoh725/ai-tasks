@@ -719,6 +719,7 @@ export const reports = sqliteTable("reports", {
 export const brands = sqliteTable("brands", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  teamId: text("team_id").references(() => teams.id, { onDelete: "cascade" }),
   projectId: text("project_id").references(() => projects.id, { onDelete: "set null" }), // linked ai-tasks project (auto-created on import)
   name: text("name").notNull(),
   metaAccountId: text("meta_account_id").notNull(),
@@ -1195,6 +1196,7 @@ export const reportsRelations = relations(reports, ({ one }) => ({
 // ============ JARVIS RELATIONS ============
 export const brandsRelations = relations(brands, ({ one, many }) => ({
   user: one(users, { fields: [brands.userId], references: [users.id] }),
+  team: one(teams, { fields: [brands.teamId], references: [teams.id] }),
   project: one(projects, { fields: [brands.projectId], references: [projects.id] }),
   campaigns: many(metaCampaigns),
   adSets: many(metaAdSets),

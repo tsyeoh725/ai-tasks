@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
 import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
+import { canAccessBrand } from "@/lib/brand-access";
 
 // POST /api/meta/pull-all  { brandId, months?: number }
 //
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
 
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
-  if (brand.userId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await canAccessBrand(brand, user.id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const accessToken = await resolveMetaAccessToken(brand);
   if (!accessToken) {

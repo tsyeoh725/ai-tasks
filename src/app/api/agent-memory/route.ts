@@ -4,6 +4,8 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { addPreference } from "@/lib/marketing/learning-agent";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
 
 // GET /api/agent-memory?brandId=
 export async function GET(req: Request) {
@@ -13,8 +15,9 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const brandId = searchParams.get("brandId");
 
+  const ws = await resolveWorkspaceForUser(user.id);
   const userBrands = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     columns: { id: true, name: true },
   });
   const brandIds = userBrands.map((b) => b.id);
@@ -27,10 +30,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Memories are shared across all members for team brands. The userId column
+  // tracks who created the entry but does not restrict reads.
   const whereCondition =
     brandId && brandId !== "all"
-      ? and(eq(agentMemory.userId, user.id), eq(agentMemory.brandId, brandId))
-      : and(eq(agentMemory.userId, user.id), inArray(agentMemory.brandId, brandIds));
+      ? eq(agentMemory.brandId, brandId)
+      : inArray(agentMemory.brandId, brandIds);
 
   const memories = await db.query.agentMemory.findMany({
     where: whereCondition,
@@ -56,7 +61,7 @@ export async function POST(req: Request) {
 
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
-  if (brand.userId !== user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!(await canAccessBrand(brand, user.id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   await addPreference(brandId, user.id, content);
 

@@ -3,6 +3,8 @@ import { brands, metaAds, metaAdSets, metaCampaigns, adDailyInsights } from "@/d
 import { and, eq, gte, lte, inArray } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
 // GET /api/meta-ads?brandId=&startDate=&endDate=&status=&healthScore=
 // Returns aggregated KPIs per ad (joined with adDailyInsights + metaAdSets).
@@ -17,14 +19,15 @@ export async function GET(req: Request) {
   const statusFilter = searchParams.get("status");
   const healthScoreFilter = searchParams.get("healthScore");
 
-  // Load the user's brands (for dropdown + scoping).
+  // Load the brands accessible in the current workspace (for dropdown + scoping).
+  const ws = await resolveWorkspaceForUser(user.id);
   const userBrands = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     columns: { id: true, name: true, config: true, isActive: true },
   });
   const userBrandIds = userBrands.map((b) => b.id);
 
-  // If a brandId is passed, enforce ownership.
+  // If a brandId is passed, enforce access.
   if (brandId && brandId !== "all" && !userBrandIds.includes(brandId)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

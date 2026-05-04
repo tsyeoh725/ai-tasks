@@ -4,11 +4,12 @@ import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { serializeBrand } from "../route";
+import { canAccessBrand } from "@/lib/brand-access";
 
-async function loadOwned(id: string, userId: string) {
+async function loadAccessible(id: string, userId: string) {
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, id) });
   if (!brand) return { error: NextResponse.json({ error: "Not found" }, { status: 404 }) };
-  if (brand.userId !== userId) {
+  if (!(await canAccessBrand(brand, userId))) {
     return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
   }
   return { brand };
@@ -19,7 +20,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!user) return unauthorized();
 
   const { id } = await params;
-  const { brand, error } = await loadOwned(id, user.id);
+  const { brand, error } = await loadAccessible(id, user.id);
   if (error) return error;
 
   return NextResponse.json(brand ? serializeBrand(brand) : null);
@@ -30,7 +31,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   if (!user) return unauthorized();
 
   const { id } = await params;
-  const { error } = await loadOwned(id, user.id);
+  const { error } = await loadAccessible(id, user.id);
   if (error) return error;
 
   const body = (await req.json()) as Record<string, unknown>;
@@ -57,7 +58,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (!user) return unauthorized();
 
   const { id } = await params;
-  const { error } = await loadOwned(id, user.id);
+  const { error } = await loadAccessible(id, user.id);
   if (error) return error;
 
   // Cascade deletes are defined on the schema (campaigns, adSets, ads, journal, memory).

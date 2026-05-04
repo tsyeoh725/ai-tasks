@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { v4 as uuid } from "uuid";
 import * as metaApi from "@/lib/marketing/meta-api";
+import { canAccessBrand } from "@/lib/brand-access";
 
 // POST /api/meta-ads/action  { adId, action: "pause" | "activate" }
 export async function POST(req: Request) {
@@ -27,9 +28,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Ad not found" }, { status: 404 });
   }
 
-  // Ownership check — the ad's brand must belong to the current user.
+  // Access check — the ad's brand must be reachable from the user's workspace.
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, ad.brandId) });
-  if (!brand || brand.userId !== user.id) {
+  if (!brand || !(await canAccessBrand(brand, user.id))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

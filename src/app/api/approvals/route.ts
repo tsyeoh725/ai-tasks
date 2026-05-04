@@ -1,16 +1,19 @@
 import { db } from "@/db";
-import { brands, decisionJournal } from "@/db/schema";
+import { decisionJournal } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
-// GET /api/approvals — pending approvals (guardVerdict = 'pending') scoped to the user's brands.
+// GET /api/approvals — pending approvals (guardVerdict = 'pending') scoped to brands in the active workspace.
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
+  const ws = await resolveWorkspaceForUser(user.id);
   const userBrands = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     columns: { id: true },
   });
   const brandIds = userBrands.map((b) => b.id);

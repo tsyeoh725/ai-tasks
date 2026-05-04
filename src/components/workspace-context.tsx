@@ -4,7 +4,6 @@
 // read it on every request; this context keeps an in-memory + localStorage
 // mirror so the sidebar UI updates instantly when switched.
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 const COOKIE = "aitasks_workspace";
 const STORAGE_KEY = "aitasks_workspace";
@@ -39,7 +38,6 @@ type Ctx = {
 const WorkspaceContext = createContext<Ctx | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const router = useRouter();
   const [workspace, setWorkspaceState] = useState<Workspace>(() => {
     if (typeof window === "undefined") return { kind: "personal" };
     // Cookie wins on first paint so it matches what the server saw on SSR.
@@ -58,16 +56,18 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }
   }, [workspace]);
 
-  const setWorkspace = useCallback(
-    (w: Workspace) => {
-      writeCookie(toString(w));
-      setWorkspaceState(w);
-      // Server components / API responses depend on the cookie — refresh so
-      // freshly-rendered data reflects the new workspace.
-      router.refresh();
-    },
-    [router],
-  );
+  const setWorkspace = useCallback((w: Workspace) => {
+    const current = readCookie();
+    const next = toString(w);
+    writeCookie(next);
+    setWorkspaceState(w);
+    // Hard reload so every client-cached fetch (brands, ads, projects, …) is
+    // re-issued against the new workspace cookie. router.refresh() only
+    // re-renders server components and leaves stale client state behind.
+    if (current !== next && typeof window !== "undefined") {
+      window.location.reload();
+    }
+  }, []);
 
   return (
     <WorkspaceContext.Provider value={{ workspace, setWorkspace }}>

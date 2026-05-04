@@ -1,8 +1,10 @@
 import { db } from "@/db";
-import { brands, decisionJournal } from "@/db/schema";
+import { decisionJournal } from "@/db/schema";
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
 // GET /api/journal?brandId=&verdict=&action=&startDate=&endDate=&limit=
 export async function GET(req: Request) {
@@ -17,9 +19,10 @@ export async function GET(req: Request) {
   const endDate = searchParams.get("endDate");
   const limit = Math.min(parseInt(searchParams.get("limit") || "100"), 500);
 
-  // Scope to the user's brands.
+  // Scope to brands accessible in the active workspace.
+  const ws = await resolveWorkspaceForUser(user.id);
   const userBrands = await db.query.brands.findMany({
-    where: eq(brands.userId, user.id),
+    where: brandsAccessibleWhere(ws, user.id),
     columns: { id: true },
   });
   const brandIds = userBrands.map((b) => b.id);

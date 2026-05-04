@@ -12,6 +12,9 @@ import { sendTelegramMessage } from "@/lib/telegram";
 import { getUserPreferences, getFreeSlots, getBlocksForDateRange } from "./time-blocker";
 import { getAccessibleProjectIds } from "@/lib/queries/projects";
 import { getOverdueTasks } from "@/lib/queries/tasks";
+import { notifyTeamMemberAdded } from "@/lib/notifications";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
 
 /**
  * Returns AI SDK v6 tools scoped to the given user.
@@ -352,6 +355,17 @@ export function getCommandTools(userId: string) {
           userId: targetUser.id,
           role: "member",
         });
+
+        const team = await db.query.teams.findFirst({ where: eq(teams.id, teamId) });
+        const inviter = await db.query.users.findFirst({ where: eq(users.id, userId) });
+        if (team) {
+          await notifyTeamMemberAdded(
+            targetUser.id,
+            inviter?.name || inviter?.email || "A teammate",
+            team.name,
+            teamId,
+          );
+        }
 
         return { success: true, invited: targetUser.name, email: targetUser.email };
       },
@@ -753,11 +767,12 @@ export function getCommandTools(userId: string) {
     // ---- Marketing (Meta Ads Optimizer) Tools ----
 
     listBrands: tool({
-      description: "List all ad brands owned by the user.",
+      description: "List all ad brands accessible in the user's active workspace.",
       inputSchema: z.object({}),
       execute: async () => {
+        const ws = await resolveWorkspaceForUser(userId);
         const userBrands = await db.query.brands.findMany({
-          where: eq(brands.userId, userId),
+          where: brandsAccessibleWhere(ws, userId),
         });
         return { brands: userBrands.map(b => ({ id: b.id, name: b.name, metaAccountId: b.metaAccountId, projectId: b.projectId })) };
       },
@@ -768,9 +783,9 @@ export function getCommandTools(userId: string) {
       inputSchema: z.object({ brandId: z.string() }),
       execute: async ({ brandId }) => {
         const brand = await db.query.brands.findFirst({
-          where: and(eq(brands.id, brandId), eq(brands.userId, userId)),
+          where: eq(brands.id, brandId),
         });
-        if (!brand) return { error: "Brand not found" };
+        if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Brand not found" };
         const ads = await db.query.metaAds.findMany({
           where: and(eq(metaAds.brandId, brandId), eq(metaAds.status, "ACTIVE")),
           limit: 50,
@@ -794,11 +809,18 @@ export function getCommandTools(userId: string) {
     }),
 
     listPendingApprovals: tool({
-      description: "List AI Guard recommendations awaiting human approval across the user's brands.",
+      description: "List AI Guard recommendations awaiting human approval across brands accessible in the active workspace.",
       inputSchema: z.object({}),
       execute: async () => {
+        const ws = await resolveWorkspaceForUser(userId);
+        const accessible = await db.query.brands.findMany({
+          where: brandsAccessibleWhere(ws, userId),
+          columns: { id: true },
+        });
+        const accessibleIds = accessible.map((b) => b.id);
+        if (accessibleIds.length === 0) return { pending: [] };
         const pending = await db.query.decisionJournal.findMany({
-          where: and(eq(decisionJournal.userId, userId), eq(decisionJournal.guardVerdict, "pending")),
+          where: and(inArray(decisionJournal.brandId, accessibleIds), eq(decisionJournal.guardVerdict, "pending")),
           limit: 20,
           orderBy: (d, { desc }) => [desc(d.createdAt)],
         });
@@ -811,11 +833,12 @@ export function getCommandTools(userId: string) {
       inputSchema: z.object({ journalId: z.string() }),
       execute: async ({ journalId }) => {
         const entry = await db.query.decisionJournal.findFirst({
-          where: and(eq(decisionJournal.id, journalId), eq(decisionJournal.userId, userId)),
+          where: eq(decisionJournal.id, journalId),
         });
         if (!entry) return { error: "Journal entry not found" };
+        const brand = await db.query.brands.findFirst({ where: eq(brands.id, entry.brandId) });
+        if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Forbidden" };
         await db.update(decisionJournal).set({ guardVerdict: "approved" }).where(eq(decisionJournal.id, journalId));
-        // Execute the action
         const { executeJournalEntry } = await import("@/lib/marketing/action-executor");
         const result = await executeJournalEntry(journalId);
         return { success: true, result };
@@ -826,21 +849,35 @@ export function getCommandTools(userId: string) {
       description: "Reject a pending AI Guard recommendation. No action is taken.",
       inputSchema: z.object({ journalId: z.string(), reason: z.string().optional() }),
       execute: async ({ journalId, reason }) => {
-        await db.update(decisionJournal).set({ guardVerdict: "rejected" }).where(and(eq(decisionJournal.id, journalId), eq(decisionJournal.userId, userId)));
+        const entry = await db.query.decisionJournal.findFirst({ where: eq(decisionJournal.id, journalId) });
+        if (!entry) return { error: "Journal entry not found" };
+        const brand = await db.query.brands.findFirst({ where: eq(brands.id, entry.brandId) });
+        if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Forbidden" };
+        await db.update(decisionJournal).set({ guardVerdict: "rejected" }).where(eq(decisionJournal.id, journalId));
         return { success: true, note: reason };
       },
     }),
 
     runMonitorCycle: tool({
-      description: "Trigger the ad monitor cycle on-demand. Without brandId, runs for all brands.",
+      description: "Trigger the ad monitor cycle on-demand. Without brandId, runs across all brands accessible in the active workspace.",
       inputSchema: z.object({ brandId: z.string().optional() }),
       execute: async ({ brandId }) => {
-        const { runMonitorCycleForBrand, runMonitorCycleForAllBrands } = await import("@/lib/marketing/core-monitor");
+        const { runMonitorCycleForBrand } = await import("@/lib/marketing/core-monitor");
         if (brandId) {
+          const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
+          if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Forbidden" };
           const result = await runMonitorCycleForBrand(brandId);
           return { result };
         }
-        const results = await runMonitorCycleForAllBrands(userId);
+        const ws = await resolveWorkspaceForUser(userId);
+        const accessible = await db.query.brands.findMany({
+          where: brandsAccessibleWhere(ws, userId),
+          columns: { id: true },
+        });
+        const results = [];
+        for (const b of accessible) {
+          results.push(await runMonitorCycleForBrand(b.id));
+        }
         return { results };
       },
     }),
@@ -852,8 +889,18 @@ export function getCommandTools(userId: string) {
         status: z.string().optional(),
       }),
       execute: async ({ brandId, status }) => {
-        const conditions = [eq(metaAds.userId, userId)];
-        if (brandId) conditions.push(eq(metaAds.brandId, brandId));
+        const ws = await resolveWorkspaceForUser(userId);
+        const accessibleBrands = await db.query.brands.findMany({
+          where: brandsAccessibleWhere(ws, userId),
+          columns: { id: true },
+        });
+        const accessibleIds = accessibleBrands.map((b) => b.id);
+        if (accessibleIds.length === 0) return { ads: [] };
+        if (brandId && !accessibleIds.includes(brandId)) return { error: "Forbidden" };
+
+        const conditions = [
+          brandId ? eq(metaAds.brandId, brandId) : inArray(metaAds.brandId, accessibleIds),
+        ];
         if (status) conditions.push(eq(metaAds.status, status));
         const ads = await db.query.metaAds.findMany({
           where: and(...conditions),
@@ -868,8 +915,10 @@ export function getCommandTools(userId: string) {
       inputSchema: z.object({ adId: z.string() }),
       execute: async ({ adId }) => {
         const { pauseAd: pauseAdFn } = await import("@/lib/marketing/meta-api");
-        const ad = await db.query.metaAds.findFirst({ where: and(eq(metaAds.id, adId), eq(metaAds.userId, userId)) });
+        const ad = await db.query.metaAds.findFirst({ where: eq(metaAds.id, adId) });
         if (!ad) return { error: "Ad not found" };
+        const brand = await db.query.brands.findFirst({ where: eq(brands.id, ad.brandId) });
+        if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Forbidden" };
         await pauseAdFn(ad.metaAdId, process.env.META_ACCESS_TOKEN!);
         await db.update(metaAds).set({ status: "PAUSED" }).where(eq(metaAds.id, adId));
         return { success: true, ad: ad.name };
@@ -881,8 +930,10 @@ export function getCommandTools(userId: string) {
       inputSchema: z.object({ adId: z.string() }),
       execute: async ({ adId }) => {
         const { activateAd: activateAdFn } = await import("@/lib/marketing/meta-api");
-        const ad = await db.query.metaAds.findFirst({ where: and(eq(metaAds.id, adId), eq(metaAds.userId, userId)) });
+        const ad = await db.query.metaAds.findFirst({ where: eq(metaAds.id, adId) });
         if (!ad) return { error: "Ad not found" };
+        const brand = await db.query.brands.findFirst({ where: eq(brands.id, ad.brandId) });
+        if (!brand || !(await canAccessBrand(brand, userId))) return { error: "Forbidden" };
         await activateAdFn(ad.metaAdId, process.env.META_ACCESS_TOKEN!);
         await db.update(metaAds).set({ status: "ACTIVE" }).where(eq(metaAds.id, adId));
         return { success: true, ad: ad.name };

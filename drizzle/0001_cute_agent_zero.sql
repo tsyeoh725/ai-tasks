@@ -1,0 +1,1 @@
+ALTER TABLE `brands` ADD `team_id` text REFERENCES teams(id) ON DELETE cascade;

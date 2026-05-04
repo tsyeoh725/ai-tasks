@@ -5,6 +5,7 @@ import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 import { executeJournalEntry } from "@/lib/marketing/action-executor";
+import { canAccessBrand } from "@/lib/brand-access";
 
 // POST /api/approvals/[id]  { verdict: "approved" | "rejected", note? }
 export async function POST(
@@ -30,9 +31,9 @@ export async function POST(
   });
   if (!entry) return NextResponse.json({ error: "Entry not found" }, { status: 404 });
 
-  // Ownership: entry.brandId must belong to the user.
+  // Access: entry.brandId must be reachable from the user's workspace.
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, entry.brandId) });
-  if (!brand || brand.userId !== user.id) {
+  if (!brand || !(await canAccessBrand(brand, user.id))) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
