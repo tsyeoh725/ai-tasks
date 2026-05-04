@@ -224,8 +224,8 @@ export default function BrandsPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {brands.map((brand) => (
-            <Link key={brand.id} href={`/brands/${brand.id}`} className="block">
-              <Card className="h-full hover:bg-gray-50 transition-colors cursor-pointer">
+            <Card key={brand.id} className="h-full hover:bg-gray-50 transition-colors">
+              <Link href={`/brands/${brand.id}`} className="block cursor-pointer">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-2">
                     <CardTitle className="truncate">{brand.name}</CardTitle>
@@ -257,35 +257,31 @@ export default function BrandsPage() {
                       <Badge variant="warning">Spend Cap</Badge>
                     )}
                   </div>
-
-                  {teams.length > 0 && (
-                    <div
-                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                      className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2"
-                    >
-                      <span className="text-[11px] text-gray-400 uppercase tracking-wide">Workspace</span>
-                      <select
-                        value={brand.teamId ?? ""}
-                        disabled={movingId === brand.id}
-                        onChange={(e) => {
-                          const next = e.target.value || null;
-                          if (next === (brand.teamId ?? null)) return;
-                          handleMove(brand.id, next);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-1 text-xs border border-gray-200 rounded-md px-2 py-1 bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="">Personal</option>
-                        {teams.map((t) => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
-                      </select>
-                      {movingId === brand.id && <span className="text-[11px] text-gray-400">Moving…</span>}
-                    </div>
-                  )}
                 </CardContent>
-              </Card>
-            </Link>
+              </Link>
+
+              {teams.length > 0 && (
+                <div className="px-6 pb-4 pt-3 border-t border-gray-100 flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400 uppercase tracking-wide">Workspace</span>
+                  <select
+                    value={brand.teamId ?? ""}
+                    disabled={movingId === brand.id}
+                    onChange={(e) => {
+                      const next = e.target.value || null;
+                      if (next === (brand.teamId ?? null)) return;
+                      handleMove(brand.id, next);
+                    }}
+                    className="flex-1 text-xs border border-gray-200 rounded-md px-2 py-1 bg-white hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">Personal</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  {movingId === brand.id && <span className="text-[11px] text-gray-400">Moving…</span>}
+                </div>
+              )}
+            </Card>
           ))}
         </div>
       )}
