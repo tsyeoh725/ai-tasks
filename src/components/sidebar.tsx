@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { useSidebar } from "@/components/sidebar-context";
+import { useWorkspace } from "@/components/workspace-context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -176,7 +177,8 @@ export function Sidebar() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [favorites, setFavorites] = useState<Favorite[]>([]);
-  const [activeWorkspace, setActiveWorkspace] = useState<string>("personal");
+  const { workspace, setWorkspace } = useWorkspace();
+  const activeWorkspace: string = workspace.kind === "personal" ? "personal" : workspace.teamId;
   const [pendingApprovals, setPendingApprovals] = useState<number>(0);
   const [mode, setMode] = useState<Mode>(() => pickModeFromPath(pathname));
   const { open: mobileOpen } = useSidebar();
@@ -191,11 +193,6 @@ export function Sidebar() {
       .then((data) => setProjects(data.projects || []))
       .catch(() => {});
 
-    fetch("/api/teams")
-      .then((r) => r.json())
-      .then((data) => setTeams(data.teams || []))
-      .catch(() => {});
-
     fetch("/api/favorites")
       .then((r) => r.json())
       .then((data) => setFavorites(data.favorites || []))
@@ -207,6 +204,16 @@ export function Sidebar() {
         const list = Array.isArray(data) ? data : data.entries || [];
         setPendingApprovals(list.length);
       })
+      .catch(() => {});
+    // Re-fetch projects + approvals when the workspace cookie changes — they
+    // are workspace-scoped on the server. Teams list is always all-of-mine.
+  }, [workspace]);
+
+  // Teams list is independent of which workspace is active.
+  useEffect(() => {
+    fetch("/api/teams")
+      .then((r) => r.json())
+      .then((data) => setTeams(data.teams || []))
       .catch(() => {});
   }, []);
 
@@ -236,12 +243,15 @@ export function Sidebar() {
             <ChevronDown className="ml-auto h-4 w-4 text-slate-400" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuItem onClick={() => setActiveWorkspace("personal")}>
+            <DropdownMenuItem onClick={() => setWorkspace({ kind: "personal" })}>
               Personal
             </DropdownMenuItem>
             {teams.length > 0 && <Separator />}
             {teams.map((team) => (
-              <DropdownMenuItem key={team.id} onClick={() => setActiveWorkspace(team.id)}>
+              <DropdownMenuItem
+                key={team.id}
+                onClick={() => setWorkspace({ kind: "team", teamId: team.id })}
+              >
                 {team.name}
               </DropdownMenuItem>
             ))}

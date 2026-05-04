@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { and, eq, inArray, lt, ne, gte, or, desc } from "drizzle-orm";
 import { getAccessibleProjectIds } from "./projects";
+import type { Workspace } from "@/lib/workspace";
 
 export type FormattedTask = {
   id: string;
@@ -72,8 +73,8 @@ export function getDayBoundaries(now: Date = new Date()) {
  * used by the formatters. This is the authoritative list — derive overdue /
  * dueToday / upcoming / completed slices from it so every widget agrees.
  */
-export async function getAccessibleTasks(userId: string) {
-  const projectIds = await getAccessibleProjectIds(userId);
+export async function getAccessibleTasks(userId: string, workspace?: Workspace) {
+  const projectIds = await getAccessibleProjectIds(userId, workspace);
   if (projectIds.length === 0) return [];
   return db.query.tasks.findMany({
     where: inArray(tasks.projectId, projectIds),

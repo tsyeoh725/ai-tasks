@@ -9,12 +9,14 @@ import {
   formatTask,
   getDayBoundaries,
 } from "@/lib/queries/tasks";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
 
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  const accessibleProjects = await getAccessibleProjects(user.id);
+  const ws = await resolveWorkspaceForUser(user.id);
+  const accessibleProjects = await getAccessibleProjects(user.id, ws);
   const projectIds = accessibleProjects.map((p) => p.id);
 
   if (projectIds.length === 0) {
@@ -27,7 +29,7 @@ export async function GET() {
 
   const { today, todayEnd, weekEnd, weekStart } = getDayBoundaries();
 
-  const allTasksRaw = await getAccessibleTasks(user.id);
+  const allTasksRaw = await getAccessibleTasks(user.id, ws);
 
   const allTasks = allTasksRaw.map(formatTask);
   const notDone = allTasksRaw.filter((t) => t.status !== "done");

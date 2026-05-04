@@ -1,10 +1,11 @@
 import { db } from "@/db";
 import { clients, projects, clientInvoices, projectClients } from "@/db/schema";
-import { and, eq, or, isNull, inArray, sql } from "drizzle-orm";
+import { and, eq, or, isNull, inArray, sql, type SQL } from "drizzle-orm";
 import { teamMembers } from "@/db/schema";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
@@ -13,14 +14,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
 
-  const userTeams = await db.query.teamMembers.findMany({
-    where: eq(teamMembers.userId, user.id!),
-    columns: { teamId: true },
-  });
-  const teamIds = userTeams.map((t) => t.teamId);
-  const conds = [and(eq(clients.ownerId, user.id!), isNull(clients.teamId))];
-  if (teamIds.length > 0) conds.push(inArray(clients.teamId, teamIds));
-  let where = or(...conds);
+  const ws = await resolveWorkspaceForUser(user.id!);
+  let where: SQL | undefined;
+  if (ws.kind === "personal") {
+    where = and(eq(clients.ownerId, user.id!), isNull(clients.teamId));
+  } else {
+    where = eq(clients.teamId, ws.teamId);
+  }
   if (status) where = and(where, eq(clients.status, status as "active" | "onboarding" | "paused" | "archived"));
 
   const list = await db.query.clients.findMany({
@@ -97,12 +97,24 @@ export async function POST(req: Request) {
   const name = typeof body.name === "string" ? body.name.trim() : "";
   if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
 
+  // Default teamId to the active workspace when client is created from a
+  // team workspace; explicit body.teamId still wins (verified below).
+  const ws = await resolveWorkspaceForUser(user.id!);
+  let resolvedTeamId: string | null = (body.teamId as string) || null;
+  if (!resolvedTeamId && ws.kind === "team") resolvedTeamId = ws.teamId;
+  if (resolvedTeamId) {
+    const member = await db.query.teamMembers.findFirst({
+      where: and(eq(teamMembers.teamId, resolvedTeamId), eq(teamMembers.userId, user.id!)),
+    });
+    if (!member) return NextResponse.json({ error: "Not a team member" }, { status: 403 });
+  }
+
   const id = uuid();
   const now = new Date();
   await db.insert(clients).values({
     id,
     ownerId: user.id!,
-    teamId: (body.teamId as string) || null,
+    teamId: resolvedTeamId,
     name,
     logoUrl: (body.logoUrl as string) || null,
     brief: (body.brief as string) || null,
