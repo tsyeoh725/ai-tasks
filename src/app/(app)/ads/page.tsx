@@ -7,6 +7,8 @@ import {
   Pause,
   Play,
   Calendar as CalendarIcon,
+  RefreshCw,
+  ShieldAlert,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -141,6 +143,8 @@ export default function AdsPage() {
   const [healthFilter, setHealthFilter] = useState<AdHealth | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [groupKey, setGroupKey] = useState<GroupKey>("none");
+  const [syncingAll, setSyncingAll] = useState(false);
+  const [auditing, setAuditing] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -186,6 +190,59 @@ export default function AdsPage() {
   function setDatePreset(days: number) {
     setDateFrom(daysAgo(days));
     setDateTo(new Date().toISOString().split("T")[0]);
+  }
+
+  async function handleSyncAll() {
+    if (syncingAll) return;
+    setSyncingAll(true);
+    setStatus(null);
+    let ok = 0;
+    let failed = 0;
+    const total = brands.length;
+    for (let i = 0; i < brands.length; i++) {
+      const b = brands[i];
+      setStatus(`Syncing ${b.name} (${i + 1}/${total})…`);
+      try {
+        const res = await fetch("/api/meta/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brandId: b.id }),
+        });
+        if (res.ok) ok++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    setStatus(`Sync complete — ${ok}/${total} brands updated${failed ? `, ${failed} failed` : ""}`);
+    setSyncingAll(false);
+    await fetchData();
+  }
+
+  async function handleRunAudit() {
+    if (auditing) return;
+    setAuditing(true);
+    setStatus("Running audit across all brands…");
+    try {
+      const res = await fetch("/api/cron/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const results = (data.results || []) as Array<{ brandName: string; recommendationsCount: number; pending: number; tasks?: { created: number } }>;
+        const totalRecs = results.reduce((s, r) => s + (r.recommendationsCount || 0), 0);
+        const totalPending = results.reduce((s, r) => s + (r.pending || 0), 0);
+        const totalTasks = results.reduce((s, r) => s + (r.tasks?.created || 0), 0);
+        setStatus(`Audit complete — ${results.length} brand${results.length === 1 ? "" : "s"} scanned, ${totalRecs} recommendation${totalRecs === 1 ? "" : "s"}, ${totalPending} pending approval, ${totalTasks} task${totalTasks === 1 ? "" : "s"} created`);
+      } else {
+        setStatus(data.error || "Audit failed");
+      }
+    } catch {
+      setStatus("Audit failed (network error)");
+    }
+    setAuditing(false);
   }
 
   async function handleAdAction(adId: string, action: "pause" | "activate") {
@@ -309,26 +366,46 @@ export default function AdsPage() {
             Monitor and act on live ad performance
           </p>
         </div>
-        <Select
-          value={selectedBrand}
-          onValueChange={(v) => v && setSelectedBrand(v)}
-        >
-          <SelectTrigger className="w-56 h-9">
-            <SelectValue>
-              {selectedBrand === "all"
-                ? "All brands"
-                : brands.find((b) => b.id === selectedBrand)?.name || "Brand"}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All brands</SelectItem>
-            {brands.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            onClick={handleSyncAll}
+            disabled={syncingAll || auditing || brands.length === 0}
+            variant="outline"
+            size="sm"
+          >
+            {syncingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            {syncingAll ? "Syncing…" : "Sync all data"}
+          </Button>
+          <Button
+            onClick={handleRunAudit}
+            disabled={syncingAll || auditing || brands.length === 0}
+            variant="outline"
+            size="sm"
+          >
+            {auditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+            {auditing ? "Running audit…" : "Run audit"}
+          </Button>
+          <Select
+            value={selectedBrand}
+            onValueChange={(v) => v && setSelectedBrand(v)}
+          >
+            <SelectTrigger className="w-56 h-9">
+              <SelectValue>
+                {selectedBrand === "all"
+                  ? "All brands"
+                  : brands.find((b) => b.id === selectedBrand)?.name || "Brand"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All brands</SelectItem>
+              {brands.map((b) => (
+                <SelectItem key={b.id} value={b.id}>
+                  {b.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {status && (

@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { brands } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/session";
 import {
@@ -12,6 +12,8 @@ import {
   type DetectedCondition,
   type DetectedConditionKind,
 } from "@/lib/marketing/task-generator";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
 
 function mapRecommendationToKind(action: string): DetectedConditionKind | null {
   // Map monitor recommendations to task-generator conditions where sensible.
@@ -60,8 +62,8 @@ export async function POST(req: Request) {
   if (targetBrandId) {
     const brand = await db.query.brands.findFirst({ where: eq(brands.id, targetBrandId) });
     if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
-    // Session callers are restricted to their own brands; cron secret can run anything.
-    if (!auth.cron && brand.userId !== auth.userId) {
+    // Session callers must have workspace access; cron secret can run anything.
+    if (!auth.cron && !(await canAccessBrand(brand, auth.userId!))) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     targets = [
@@ -71,10 +73,11 @@ export async function POST(req: Request) {
     const all = await db.query.brands.findMany({ where: eq(brands.isActive, true) });
     targets = all.map((b) => ({ id: b.id, userId: b.userId, name: b.name, projectId: b.projectId }));
   } else {
-    const mine = await db.query.brands.findMany({
-      where: eq(brands.userId, auth.userId),
+    const ws = await resolveWorkspaceForUser(auth.userId!);
+    const accessible = await db.query.brands.findMany({
+      where: and(brandsAccessibleWhere(ws, auth.userId!), eq(brands.isActive, true))!,
     });
-    targets = mine.map((b) => ({ id: b.id, userId: b.userId, name: b.name, projectId: b.projectId }));
+    targets = accessible.map((b) => ({ id: b.id, userId: b.userId, name: b.name, projectId: b.projectId }));
   }
 
   if (targets.length === 0) {
