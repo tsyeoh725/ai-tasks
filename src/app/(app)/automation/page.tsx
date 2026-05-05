@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -16,6 +16,7 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Info,
   Loader2,
   Pause,
   Play,
@@ -28,6 +29,21 @@ import {
 const ACTION_OPTIONS = ["pause", "kill", "boost_budget", "duplicate"] as const;
 type ActionOpt = (typeof ACTION_OPTIONS)[number];
 
+// action → corresponding brand-level toggle key in BrandConfig.toggles.
+// kill + pause both ride on killEnabled (matches core-monitor's mapping).
+const ACTION_TOGGLE: Record<ActionOpt, keyof BrandToggles> = {
+  pause: "killEnabled",
+  kill: "killEnabled",
+  boost_budget: "budgetEnabled",
+  duplicate: "duplicateEnabled",
+};
+
+type BrandToggles = {
+  killEnabled: boolean;
+  budgetEnabled: boolean;
+  duplicateEnabled: boolean;
+};
+
 type BrandRow = {
   brandId: string;
   brandName: string;
@@ -37,6 +53,7 @@ type BrandRow = {
   autoApproveMinConfidence: number;
   autoApproveActions: string[];
   lastCycleAt: string | null;
+  brandToggles: BrandToggles;
 };
 
 type CycleStep = {
@@ -57,12 +74,13 @@ type Cycle = {
   steps: CycleStep[];
 };
 
-type PromptResponse = {
+type PromptSection = {
+  kind: "audit" | "confidence" | "health";
+  label: string;
+  description: string;
   template: string;
   defaultTemplate: string;
-  variables: Array<{ name: string; description: string }>;
   isDefault: boolean;
-  updatedAt: string | null;
 };
 
 function timeAgo(iso: string | null): string {
@@ -94,10 +112,11 @@ function stepBadge(step: CycleStep) {
 export default function AutomationPage() {
   const [brandsList, setBrandsList] = useState<BrandRow[]>([]);
   const [cycles, setCycles] = useState<Cycle[]>([]);
-  const [prompt, setPrompt] = useState<PromptResponse | null>(null);
-  const [promptDraft, setPromptDraft] = useState<string>("");
+  const [prompts, setPrompts] = useState<PromptSection[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [activePromptKind, setActivePromptKind] = useState<PromptSection["kind"]>("audit");
   const [globalPause, setGlobalPause] = useState<boolean>(false);
-  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [savingKind, setSavingKind] = useState<string | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,10 +124,10 @@ export default function AutomationPage() {
   const fetchAll = useCallback(async (opts: { showSpinner?: boolean } = {}) => {
     if (opts.showSpinner !== false) setLoading(true);
     try {
-      const [settingsRes, cyclesRes, promptRes, marketingRes] = await Promise.all([
+      const [settingsRes, cyclesRes, promptsRes, marketingRes] = await Promise.all([
         fetch("/api/automation/settings"),
         fetch("/api/automation/cycles?limit=20"),
-        fetch("/api/automation/system-prompt"),
+        fetch("/api/automation/prompts"),
         fetch("/api/marketing/settings"),
       ]);
       if (settingsRes.ok) {
@@ -119,10 +138,17 @@ export default function AutomationPage() {
         const data = (await cyclesRes.json()) as { cycles: Cycle[] };
         setCycles(data.cycles);
       }
-      if (promptRes.ok) {
-        const data = (await promptRes.json()) as PromptResponse;
-        setPrompt(data);
-        setPromptDraft((prev) => (prev === "" || prev === undefined ? data.template : prev));
+      if (promptsRes.ok) {
+        const data = (await promptsRes.json()) as { prompts: PromptSection[] };
+        setPrompts(data.prompts);
+        // Seed drafts only if a draft for that kind hasn't been touched.
+        setDrafts((prev) => {
+          const next = { ...prev };
+          for (const p of data.prompts) {
+            if (next[p.kind] === undefined) next[p.kind] = p.template;
+          }
+          return next;
+        });
       }
       if (marketingRes.ok) {
         const data = (await marketingRes.json()) as { settings: Record<string, unknown> };
@@ -220,17 +246,17 @@ export default function AutomationPage() {
     }
   }
 
-  async function handleSavePrompt() {
-    setSavingPrompt(true);
+  async function handleSavePrompt(kind: PromptSection["kind"]) {
+    setSavingKind(kind);
     setStatus(null);
     try {
-      const res = await fetch("/api/automation/system-prompt", {
+      const res = await fetch("/api/automation/prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template: promptDraft }),
+        body: JSON.stringify({ kind, template: drafts[kind] ?? "" }),
       });
       if (res.ok) {
-        setStatus("System prompt saved");
+        setStatus(`Saved ${kind} prompt`);
         await fetchAll({ showSpinner: false });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -239,30 +265,35 @@ export default function AutomationPage() {
     } catch {
       setStatus("Save failed — network error");
     }
-    setSavingPrompt(false);
+    setSavingKind(null);
   }
 
-  async function handleResetPrompt() {
-    if (!prompt) return;
-    setPromptDraft(prompt.defaultTemplate);
+  function handleLoadDefault(kind: PromptSection["kind"]) {
+    const p = prompts.find((pp) => pp.kind === kind);
+    if (!p) return;
+    setDrafts((prev) => ({ ...prev, [kind]: p.defaultTemplate }));
   }
 
-  async function handleClearOverride() {
-    setSavingPrompt(true);
+  async function handleClearOverride(kind: PromptSection["kind"]) {
+    setSavingKind(kind);
     try {
-      const res = await fetch("/api/automation/system-prompt", {
+      const res = await fetch("/api/automation/prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template: "" }),
+        body: JSON.stringify({ kind, template: "" }),
       });
       if (res.ok) {
-        setStatus("Reverted to default prompt");
+        setStatus(`Reverted ${kind} prompt to default`);
+        const p = prompts.find((pp) => pp.kind === kind);
+        if (p) setDrafts((prev) => ({ ...prev, [kind]: p.defaultTemplate }));
         await fetchAll({ showSpinner: false });
-        setPromptDraft(prompt?.defaultTemplate ?? "");
       }
     } catch {}
-    setSavingPrompt(false);
+    setSavingKind(null);
   }
+
+  const activePrompt = prompts.find((p) => p.kind === activePromptKind);
+  const activeDraft = drafts[activePromptKind] ?? activePrompt?.template ?? "";
 
   return (
     <div className="max-w-6xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-5 animate-fade-in">
@@ -299,8 +330,7 @@ export default function AutomationPage() {
         </div>
       )}
 
-      {/* Pipeline reference: explains what runs in a cycle. Static graphic
-          since the actual run-by-run state lives in the cycles list below. */}
+      {/* Pipeline reference */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
@@ -365,103 +395,133 @@ export default function AutomationPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {brandsList.map((b) => (
-                    <tr key={b.brandId} className="align-middle">
-                      <td className="px-2 py-2.5">
-                        <div className="font-medium text-slate-900">{b.brandName}</div>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <button
-                          type="button"
-                          onClick={() => patchBrand(b.brandId, { enabled: !b.enabled })}
-                          className={cn(
-                            "h-5 w-9 rounded-full relative transition-colors",
-                            b.enabled ? "bg-emerald-500" : "bg-slate-300",
-                          )}
-                          aria-pressed={b.enabled}
-                          aria-label={`Toggle auto-pilot for ${b.brandName}`}
-                        >
-                          <span
-                            className={cn(
-                              "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all",
-                              b.enabled ? "left-4" : "left-0.5",
-                            )}
-                          />
-                        </button>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <select
-                          value={b.cadenceHours}
-                          onChange={(e) => patchBrand(b.brandId, { cadenceHours: Number(e.target.value) })}
-                          className="rounded border border-slate-300 px-2 py-1 text-xs"
-                        >
-                          {[1, 3, 6, 12, 24, 48].map((h) => (
-                            <option key={h} value={h}>{h}h</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <select
-                          value={b.autoApproveMinConfidence}
-                          onChange={(e) =>
-                            patchBrand(b.brandId, { autoApproveMinConfidence: Number(e.target.value) })
-                          }
-                          className="rounded border border-slate-300 px-2 py-1 text-xs"
-                        >
-                          {[0.7, 0.75, 0.8, 0.85, 0.9, 0.95].map((c) => (
-                            <option key={c} value={c}>≥ {Math.round(c * 100)}%</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <div className="flex flex-wrap gap-1">
-                          {ACTION_OPTIONS.map((a) => {
-                            const on = b.autoApproveActions.includes(a);
-                            const isSpend = a === "boost_budget" || a === "duplicate";
-                            return (
-                              <button
-                                key={a}
-                                type="button"
-                                onClick={() => toggleAction(b.brandId, a)}
+                  {brandsList.map((b) => {
+                    const blockedActions = b.autoApproveActions.filter(
+                      (a) => !b.brandToggles[ACTION_TOGGLE[a as ActionOpt]],
+                    );
+                    return (
+                      <Fragment key={b.brandId}>
+                        <tr className="align-middle">
+                          <td className="px-2 py-2.5">
+                            <div className="font-medium text-slate-900">{b.brandName}</div>
+                          </td>
+                          <td className="px-2 py-2.5">
+                            <button
+                              type="button"
+                              onClick={() => patchBrand(b.brandId, { enabled: !b.enabled })}
+                              className={cn(
+                                "h-5 w-9 rounded-full relative transition-colors",
+                                b.enabled ? "bg-emerald-500" : "bg-slate-300",
+                              )}
+                              aria-pressed={b.enabled}
+                              aria-label={`Toggle auto-pilot for ${b.brandName}`}
+                            >
+                              <span
                                 className={cn(
-                                  "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border transition-colors",
-                                  on
-                                    ? isSpend
-                                      ? "bg-amber-100 text-amber-800 border-amber-300"
-                                      : "bg-emerald-100 text-emerald-800 border-emerald-300"
-                                    : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100",
+                                  "absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all",
+                                  b.enabled ? "left-4" : "left-0.5",
                                 )}
-                                title={
-                                  isSpend
-                                    ? "Auto-approving this action moves real spend"
-                                    : "Reversible-ish action"
-                                }
+                              />
+                            </button>
+                          </td>
+                          <td className="px-2 py-2.5">
+                            <select
+                              value={b.cadenceHours}
+                              onChange={(e) => patchBrand(b.brandId, { cadenceHours: Number(e.target.value) })}
+                              className="rounded border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              {[1, 3, 6, 12, 24, 48].map((h) => (
+                                <option key={h} value={h}>{h}h</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2.5">
+                            <select
+                              value={b.autoApproveMinConfidence}
+                              onChange={(e) =>
+                                patchBrand(b.brandId, { autoApproveMinConfidence: Number(e.target.value) })
+                              }
+                              className="rounded border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              {[0.7, 0.75, 0.8, 0.85, 0.9, 0.95].map((c) => (
+                                <option key={c} value={c}>≥ {Math.round(c * 100)}%</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2.5">
+                            <div className="flex flex-wrap gap-1">
+                              {ACTION_OPTIONS.map((a) => {
+                                const on = b.autoApproveActions.includes(a);
+                                const isSpend = a === "boost_budget" || a === "duplicate";
+                                const brandToggleOn = b.brandToggles[ACTION_TOGGLE[a]];
+                                const blocked = on && !brandToggleOn;
+                                return (
+                                  <button
+                                    key={a}
+                                    type="button"
+                                    onClick={() => toggleAction(b.brandId, a)}
+                                    className={cn(
+                                      "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border transition-colors",
+                                      blocked
+                                        ? "bg-red-50 text-red-700 border-red-300"
+                                        : on
+                                          ? isSpend
+                                            ? "bg-amber-100 text-amber-800 border-amber-300"
+                                            : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                          : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100",
+                                    )}
+                                    title={
+                                      blocked
+                                        ? `Brand has ${ACTION_TOGGLE[a]} OFF — turn it on in Brand settings, or this won't auto-execute`
+                                        : isSpend
+                                          ? "Auto-approving this action moves real spend"
+                                          : "Reversible-ish action"
+                                    }
+                                  >
+                                    {a}
+                                    {(blocked || (isSpend && on)) && (
+                                      <AlertTriangle className="inline ml-0.5 w-3 h-3" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2.5 text-xs text-slate-500">{timeAgo(b.lastCycleAt)}</td>
+                          <td className="px-2 py-2.5 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRunNow(b.brandId)}
+                              disabled={running.has(b.brandId)}
+                            >
+                              {running.has(b.brandId) ? (
+                                <Loader2 className="animate-spin" />
+                              ) : (
+                                <RefreshCw />
+                              )}
+                              Run now
+                            </Button>
+                          </td>
+                        </tr>
+                        {blockedActions.length > 0 && (
+                          <tr className="bg-red-50/50">
+                            <td colSpan={7} className="px-2 py-1.5 text-[11px] text-red-700">
+                              <AlertTriangle className="inline w-3 h-3 mr-1" />
+                              {blockedActions.join(", ")} won&apos;t auto-execute — turn on the matching toggle on the{" "}
+                              <a
+                                href={`/brands/${b.brandId}`}
+                                className="underline font-medium hover:text-red-900"
                               >
-                                {a}
-                                {isSpend && on && <AlertTriangle className="inline ml-0.5 w-3 h-3" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-2 py-2.5 text-xs text-slate-500">{timeAgo(b.lastCycleAt)}</td>
-                      <td className="px-2 py-2.5 text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRunNow(b.brandId)}
-                          disabled={running.has(b.brandId)}
-                        >
-                          {running.has(b.brandId) ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <RefreshCw />
-                          )}
-                          Run now
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
+                                {b.brandName} brand page
+                              </a>{" "}
+                              first.
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -469,71 +529,117 @@ export default function AutomationPage() {
         </CardContent>
       </Card>
 
-      {/* System prompt editor */}
+      {/* Confidence explainer */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">AI Audit system prompt</CardTitle>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Info className="w-4 h-4" />
+            How the AI assigns confidence
+          </CardTitle>
+          <CardDescription>What the donut on each approval actually means.</CardDescription>
+        </CardHeader>
+        <CardContent className="text-sm text-slate-700 dark:text-slate-200 space-y-2">
+          <p>
+            Confidence is <strong>not calculated by the system</strong> — it&apos;s a number Claude returns alongside the verdict in the same tool call. The model weighs the recommendation against:
+          </p>
+          <ul className="list-disc pl-5 space-y-1 text-[13px]">
+            <li>The brand&apos;s thresholds (CPL/CTR/frequency) and how clearly the data crosses them</li>
+            <li>How long the ad has been running and how many impressions it has</li>
+            <li>The brand&apos;s memory — past operator remarks and weekly summaries</li>
+            <li>The action&apos;s risk class (high/medium/low — set by the Ads health rubric below)</li>
+          </ul>
+          <p>
+            The <strong>Confidence rubric</strong> below tells the model how to map evidence quality to a 0–1 number. The <strong>auto-approve floor</strong> on each brand row gates whether an &quot;approved&quot; verdict actually runs unattended — anything below it falls back to /approvals.
+          </p>
+          <p className="text-xs text-slate-500">
+            Edit the Confidence prompt below to tighten or loosen how aggressive the model is. The default rule says confidence &lt; 0.7 must be &quot;pending&quot; regardless of other signals.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Three-section system prompt editor */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">AI Audit prompts</CardTitle>
           <CardDescription>
-            What the AI Guard reads before scoring each recommendation. Edit freely; placeholders below are filled in per-brand at run time.
+            Three prompts feed the Guard: how to decide a verdict, how to score confidence, and how to assess risk. Brand-specific data (thresholds, memory) is appended automatically — you don&apos;t need any placeholders.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {prompt && (
+          {prompts.length > 0 && (
             <>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant={prompt.isDefault ? "default" : "warning"}>
-                  {prompt.isDefault ? "Using default" : "Override active"}
-                </Badge>
-                {prompt.updatedAt && (
-                  <span className="text-[11px] text-slate-500">
-                    Last saved {timeAgo(prompt.updatedAt)}
-                  </span>
-                )}
+              <div className="flex items-center gap-1 border-b border-slate-200 dark:border-white/10">
+                {prompts.map((p) => (
+                  <button
+                    key={p.kind}
+                    type="button"
+                    onClick={() => setActivePromptKind(p.kind)}
+                    className={cn(
+                      "px-3 py-1.5 text-sm border-b-2 -mb-px transition-colors",
+                      activePromptKind === p.kind
+                        ? "border-indigo-500 text-indigo-700 font-medium"
+                        : "border-transparent text-slate-500 hover:text-slate-800",
+                    )}
+                  >
+                    {p.label}
+                    {!p.isDefault && (
+                      <span className="ml-1.5 text-[10px] uppercase tracking-wider text-amber-600">
+                        edited
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
-              <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-200 rounded-md px-3 py-2">
-                <div className="font-semibold uppercase tracking-wider text-[10px] text-slate-500 mb-1">
-                  Available variables
-                </div>
-                <ul className="space-y-0.5">
-                  {prompt.variables.map((v) => (
-                    <li key={v.name}>
-                      <code className="text-indigo-700 font-mono">{v.name}</code> — {v.description}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <Label htmlFor="guard-prompt" className="text-xs">Prompt template</Label>
-              <textarea
-                id="guard-prompt"
-                rows={20}
-                value={promptDraft}
-                onChange={(e) => setPromptDraft(e.target.value)}
-                disabled={savingPrompt}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs font-mono leading-relaxed"
-                placeholder={prompt.defaultTemplate}
-              />
-              {!promptDraft.includes("{{brand_memory}}") && (
-                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                  <AlertTriangle className="inline w-3 h-3 mr-1" />
-                  Heads up: your prompt is missing <code>{`{{brand_memory}}`}</code> — operator remarks won&apos;t reach the AI Guard.
-                </p>
+
+              {activePrompt && (
+                <>
+                  <p className="text-xs text-slate-500">{activePrompt.description}</p>
+                  <Label htmlFor={`prompt-${activePromptKind}`} className="text-xs">
+                    {activePrompt.label} prompt
+                  </Label>
+                  <textarea
+                    id={`prompt-${activePromptKind}`}
+                    rows={20}
+                    value={activeDraft}
+                    onChange={(e) =>
+                      setDrafts((prev) => ({ ...prev, [activePromptKind]: e.target.value }))
+                    }
+                    disabled={savingKind === activePromptKind}
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs font-mono leading-relaxed"
+                  />
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => handleSavePrompt(activePromptKind)}
+                      disabled={savingKind === activePromptKind}
+                    >
+                      {savingKind === activePromptKind ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleLoadDefault(activePromptKind)}
+                      disabled={savingKind === activePromptKind}
+                    >
+                      <RotateCcw />
+                      Load default
+                    </Button>
+                    {!activePrompt.isDefault && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleClearOverride(activePromptKind)}
+                        disabled={savingKind === activePromptKind}
+                      >
+                        <XCircle />
+                        Revert to default
+                      </Button>
+                    )}
+                  </div>
+                </>
               )}
-              <div className="flex gap-2">
-                <Button size="sm" variant="primary" onClick={handleSavePrompt} disabled={savingPrompt}>
-                  {savingPrompt ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
-                  Save
-                </Button>
-                <Button size="sm" variant="outline" onClick={handleResetPrompt} disabled={savingPrompt}>
-                  <RotateCcw />
-                  Load default
-                </Button>
-                {!prompt.isDefault && (
-                  <Button size="sm" variant="outline" onClick={handleClearOverride} disabled={savingPrompt}>
-                    <XCircle />
-                    Revert to default
-                  </Button>
-                )}
-              </div>
             </>
           )}
         </CardContent>

@@ -116,62 +116,116 @@ const GUARD_TOOL = {
   },
 };
 
-// Default system prompt template. Editable per-user via the /automation
-// page (stored in globalSettings under key=guard_system_prompt). The
-// {{...}} placeholders are substituted at render time so the user never
-// has to re-paste the dynamic brand context when tweaking instructions.
-export const DEFAULT_GUARD_SYSTEM_PROMPT = `You are Jarvis AI Guard — a quality assurance agent for automated Meta ad management.
+// Three editable prompt sections. The user can edit each one independently
+// on /automation. They get concatenated (in this order) into the system
+// message; brand-specific context (thresholds, toggles, memory) is appended
+// to the user message at runtime, NOT spliced into the prompt — so the
+// editable text stays static and readable.
+export const DEFAULT_AUDIT_PROMPT = `You are Jarvis AI Guard — a quality assurance agent for automated Meta ad management.
 
 Your job is to validate or reject recommendations made by the Core Monitor agent. You must evaluate whether each recommendation is logically sound, data-backed, and safe to execute.
-
-## Brand Configuration
-{{brand_thresholds}}
-{{toggles}}
-
-## Brand Memory & Learning History
-{{brand_memory}}
 
 ## Evaluation Criteria
 1. DATA SUFFICIENCY: If the ad has been running for less than 24 hours or has very low impressions (<100), reject or mark pending — insufficient data to make a decision.
 2. LOGIC SOUNDNESS: Does the KPI data actually support the recommendation? Check that the numbers match the thresholds.
-3. RISK ASSESSMENT:
-   - HIGH RISK: Killing the last active ad in a campaign, large budget changes (>50% increase)
-   - MEDIUM RISK: Pausing ads with moderate performance, duplicating to untested audiences
-   - LOW RISK: Small budget adjustments, pausing clearly underperforming ads
-4. BRAND ALIGNMENT: Does this recommendation align with the brand's historical patterns and preferences from memory?
+3. BRAND ALIGNMENT: Does this recommendation align with the brand's historical patterns and preferences from memory?
 
 ## Decision Rules
-- If confidence < 0.7: verdict MUST be "pending"
-- If the action is high-risk: verdict MUST be "pending"
 - If data is insufficient: verdict MUST be "rejected" with explanation
+- If the action is high-risk: verdict MUST be "pending"
 - If logic is sound and risk is low/medium with high confidence: verdict can be "approved"
 
 Always use the validate_recommendation tool to return your verdict.`;
 
-export const GUARD_PROMPT_VARIABLES = [
-  { name: "{{brand_thresholds}}", description: "CPL/CTR/frequency thresholds set on the brand" },
-  { name: "{{toggles}}", description: "Which automation actions the brand has enabled" },
-  { name: "{{brand_memory}}", description: "Recent memory entries (operator remarks, weekly summaries)" },
-] as const;
+export const DEFAULT_CONFIDENCE_PROMPT = `## Confidence Rubric
+Return a confidence value between 0.0 and 1.0 representing how sure you are the verdict is correct.
 
-async function loadGuardPromptTemplate(brandUserId: string): Promise<string> {
-  // The prompt is per-user (the brand's owner), not global. Falls back to
-  // the default when no override exists or the saved value is empty.
+- 0.90–1.00 — KPI signal is unambiguous, the data window is large, and the recommendation matches a pattern the brand has approved before.
+- 0.75–0.89 — Numbers clearly cross thresholds but the trend is recent or the sample is moderate. Reasonable approval candidate for low-risk actions.
+- 0.60–0.74 — Signal exists but is borderline (close to threshold, small sample, conflicting KPIs). Prefer "pending".
+- < 0.60 — Data is sparse, contradictory, or the brand's memory shows similar past calls were wrong. Use "pending" or "rejected".
+
+Hard rule: if confidence < 0.7, verdict MUST be "pending" regardless of the other rules.`;
+
+export const DEFAULT_HEALTH_PROMPT = `## Ads Health Risk Assessment
+Classify the action's risk to the account before deciding the verdict:
+
+- HIGH RISK: Killing the last active ad in a campaign; budget changes greater than 50%; duplicating into a brand-new audience without a winner reference; any action on a campaign currently spending >RM 500/day.
+- MEDIUM RISK: Pausing an ad with moderate performance; duplicating to a partially-tested audience; budget changes between 20-50%.
+- LOW RISK: Small budget adjustments (<20%); pausing an ad that has clearly underperformed for 3+ days; killing an ad with zero conversions over its full runtime.
+
+A high-risk action must be downgraded to "pending" so a human reviews it, even if the KPI logic is sound.`;
+
+export const PROMPT_KINDS = ["audit", "confidence", "health"] as const;
+export type PromptKind = (typeof PROMPT_KINDS)[number];
+
+const PROMPT_DEFAULTS: Record<PromptKind, string> = {
+  audit: DEFAULT_AUDIT_PROMPT,
+  confidence: DEFAULT_CONFIDENCE_PROMPT,
+  health: DEFAULT_HEALTH_PROMPT,
+};
+
+const PROMPT_KEY: Record<PromptKind, string> = {
+  audit: "guard_audit_prompt",
+  confidence: "guard_confidence_prompt",
+  health: "guard_health_prompt",
+};
+
+// Backward compat: the prior single-prompt key. If a user saved one under
+// the old name, treat it as the audit prompt on first read.
+const LEGACY_AUDIT_KEY = "guard_system_prompt";
+
+async function loadPromptSection(userId: string, kind: PromptKind): Promise<string> {
   try {
     const row = await db.query.globalSettings.findFirst({
-      where: and(eq(globalSettings.userId, brandUserId), eq(globalSettings.key, "guard_system_prompt")),
+      where: and(eq(globalSettings.userId, userId), eq(globalSettings.key, PROMPT_KEY[kind])),
     });
-    if (!row) return DEFAULT_GUARD_SYSTEM_PROMPT;
-    const parsed = JSON.parse(row.value) as { template?: string } | string;
-    const template = typeof parsed === "string" ? parsed : parsed?.template;
-    return template && template.trim().length > 0 ? template : DEFAULT_GUARD_SYSTEM_PROMPT;
+    if (row) {
+      const parsed = JSON.parse(row.value) as { template?: string } | string;
+      const template = typeof parsed === "string" ? parsed : parsed?.template;
+      if (template && template.trim().length > 0) return template;
+    }
+    if (kind === "audit") {
+      const legacy = await db.query.globalSettings.findFirst({
+        where: and(eq(globalSettings.userId, userId), eq(globalSettings.key, LEGACY_AUDIT_KEY)),
+      });
+      if (legacy) {
+        const parsed = JSON.parse(legacy.value) as { template?: string } | string;
+        const template = typeof parsed === "string" ? parsed : parsed?.template;
+        // Strip any old {{...}} tokens — they were resolved at render time
+        // before, but the new format has no placeholders. Leaving them in
+        // would produce literal `{{brand_thresholds}}` in the system prompt.
+        if (template && template.trim().length > 0) {
+          return template.replace(/\{\{[a-z_]+\}\}/g, "").trim();
+        }
+      }
+    }
+    return PROMPT_DEFAULTS[kind];
   } catch {
-    return DEFAULT_GUARD_SYSTEM_PROMPT;
+    return PROMPT_DEFAULTS[kind];
   }
 }
 
-function renderGuardPrompt(
-  template: string,
+export async function loadAllPromptSections(
+  userId: string,
+): Promise<Record<PromptKind, string>> {
+  const [audit, confidence, health] = await Promise.all([
+    loadPromptSection(userId, "audit"),
+    loadPromptSection(userId, "confidence"),
+    loadPromptSection(userId, "health"),
+  ]);
+  return { audit, confidence, health };
+}
+
+export function getPromptDefault(kind: PromptKind): string {
+  return PROMPT_DEFAULTS[kind];
+}
+
+export function getPromptKey(kind: PromptKind): string {
+  return PROMPT_KEY[kind];
+}
+
+function formatBrandContext(
   brandConfig: BrandConfig,
   memoryEntries: AgentMemoryEntry[],
 ): string {
@@ -185,27 +239,22 @@ function renderGuardPrompt(
           .join("\n")
       : "No prior memory for this brand.";
 
-  const thresholds = [
-    `- CPL Maximum Threshold: ${brandConfig.thresholds.cplMax ?? "Not set"}`,
-    `- CTR Minimum Threshold: ${brandConfig.thresholds.ctrMin ?? "Not set"}`,
-    `- Frequency Maximum Threshold: ${brandConfig.thresholds.frequencyMax ?? "Not set"}`,
-  ].join("\n");
+  return `## Brand Context (auto-injected)
+- CPL Maximum Threshold: ${brandConfig.thresholds.cplMax ?? "Not set"}
+- CTR Minimum Threshold: ${brandConfig.thresholds.ctrMin ?? "Not set"}
+- Frequency Maximum Threshold: ${brandConfig.thresholds.frequencyMax ?? "Not set"}
+- Automation Toggles: Kill=${brandConfig.toggles.killEnabled}, Budget=${brandConfig.toggles.budgetEnabled}, Duplicate=${brandConfig.toggles.duplicateEnabled}
 
-  const toggles = `- Automation Toggles: Kill=${brandConfig.toggles.killEnabled}, Budget=${brandConfig.toggles.budgetEnabled}, Duplicate=${brandConfig.toggles.duplicateEnabled}`;
-
-  return template
-    .replaceAll("{{brand_thresholds}}", thresholds)
-    .replaceAll("{{toggles}}", toggles)
-    .replaceAll("{{brand_memory}}", memoryContext);
+## Brand Memory & Learning History (auto-injected)
+${memoryContext}`;
 }
 
-async function buildGuardSystemPrompt(
-  brandUserId: string,
-  brandConfig: BrandConfig,
-  memoryEntries: AgentMemoryEntry[],
-): Promise<string> {
-  const template = await loadGuardPromptTemplate(brandUserId);
-  return renderGuardPrompt(template, brandConfig, memoryEntries);
+async function buildGuardSystemPrompt(brandUserId: string): Promise<string> {
+  const sections = await loadAllPromptSections(brandUserId);
+  return [sections.audit, sections.confidence, sections.health]
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join("\n\n");
 }
 
 /**
@@ -219,6 +268,10 @@ export async function evaluateRecommendation(
 ): Promise<GuardVerdict> {
   const anthropic = await getClient();
 
+  // Brand context (thresholds, toggles, memory) is appended to the user
+  // message so the editable system prompt can stay placeholder-free.
+  const brandContext = formatBrandContext(brandConfig, memoryEntries);
+
   const userMessage = `Evaluate this ad management recommendation:
 
 **Action:** ${recommendation.action.toUpperCase()}
@@ -231,17 +284,14 @@ export async function evaluateRecommendation(
 - Frequency: ${recommendation.kpiValues.frequency !== null ? recommendation.kpiValues.frequency.toFixed(2) : "N/A"}
 - Total Spend: RM ${recommendation.kpiValues.spend.toFixed(2)}
 
-**Thresholds:**
-- CPL Max: ${recommendation.thresholds.cplMax !== null ? `RM ${recommendation.thresholds.cplMax}` : "Not set"}
-- CTR Min: ${recommendation.thresholds.ctrMin !== null ? `${recommendation.thresholds.ctrMin}%` : "Not set"}
-- Frequency Max: ${recommendation.thresholds.frequencyMax ?? "Not set"}
+${brandContext}
 
 Validate this recommendation using the tool.`;
 
   const response = await anthropic.messages.create({
     model: GUARD_MODEL,
     max_tokens: 1024,
-    system: await buildGuardSystemPrompt(brandUserId, brandConfig, memoryEntries),
+    system: await buildGuardSystemPrompt(brandUserId),
     tools: [GUARD_TOOL],
     tool_choice: { type: "tool", name: "validate_recommendation" },
     messages: [{ role: "user", content: userMessage }],

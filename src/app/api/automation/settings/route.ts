@@ -20,7 +20,7 @@ export async function GET() {
   const ws = await resolveWorkspaceForUser(user.id);
   const accessibleBrands = await db.query.brands.findMany({
     where: brandsAccessibleWhere(ws, user.id),
-    columns: { id: true, name: true, isActive: true, userId: true },
+    columns: { id: true, name: true, isActive: true, userId: true, config: true },
   });
   if (accessibleBrands.length === 0) {
     return NextResponse.json({ brands: [] });
@@ -32,6 +32,11 @@ export async function GET() {
   });
   const byBrand = new Map(rows.map((r) => [r.brandId, r]));
 
+  // Surface per-brand BrandConfig.toggles so the UI can warn when an
+  // auto-approve action is enabled here but disabled at the brand level
+  // — those approvals would be auto-routed to /approvals anyway because
+  // core-monitor downgrades them. Better to flag it before the user wonders
+  // why nothing is auto-running.
   return NextResponse.json({
     brands: accessibleBrands.map((b) => {
       const row = byBrand.get(b.id);
@@ -39,6 +44,13 @@ export async function GET() {
       if (row) {
         try {
           actions = JSON.parse(row.autoApproveActions) as string[];
+        } catch {}
+      }
+      let brandToggles = { killEnabled: false, budgetEnabled: false, duplicateEnabled: false };
+      if (b.config) {
+        try {
+          const parsed = JSON.parse(b.config) as { toggles?: Partial<typeof brandToggles> };
+          if (parsed.toggles) brandToggles = { ...brandToggles, ...parsed.toggles };
         } catch {}
       }
       return {
@@ -50,6 +62,7 @@ export async function GET() {
         autoApproveMinConfidence: row?.autoApproveMinConfidence ?? 0.85,
         autoApproveActions: actions,
         lastCycleAt: row?.lastCycleAt?.toISOString() ?? null,
+        brandToggles,
       };
     }),
   });
