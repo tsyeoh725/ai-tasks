@@ -20,17 +20,17 @@ type Risk = "low" | "medium" | "high";
 
 type Entry = {
   id: string;
-  brand_id: string;
-  brand_name?: string;
-  ad_id: string | null;
-  ad_name?: string;
+  brandId: string;
+  brandName?: string;
+  adId: string | null;
+  adName?: string;
   recommendation: RecommendationAction;
   reason: string;
-  guard_reasoning?: string | null;
+  guardReasoning?: string | null;
   confidence: number | null;
-  risk_level: Risk | null;
-  guard_verdict: Verdict;
-  created_at: string;
+  riskLevel: Risk | null;
+  guardVerdict: Verdict;
+  createdAt: string;
 };
 
 const actionVariant: Record<
@@ -48,6 +48,16 @@ const actionLabel: Record<RecommendationAction, string> = {
   pause: "PAUSE",
   boost_budget: "BOOST",
   duplicate: "DUPLICATE",
+};
+
+// Plain-English description of what gets executed on approval — surfaced
+// next to the Approve button so the user knows the consequence of clicking
+// it, instead of having to decode the action badge.
+const actionDescription: Record<RecommendationAction, string> = {
+  kill: "Permanently delete this ad on Meta. Cannot be undone.",
+  pause: "Pause this ad on Meta. You can re-activate it later.",
+  boost_budget: "Increase the daily budget on this ad's ad set on Meta.",
+  duplicate: "Duplicate this ad with the brand's standard test settings on Meta.",
 };
 
 const riskColor: Record<Risk, string> = {
@@ -71,11 +81,18 @@ export default function ApprovalsPage() {
       const data = await res.json();
       const list = Array.isArray(data) ? data : data.entries || [];
       setEntries(
-        list.map((e: Record<string, unknown>) => ({
-          ...(e as unknown as Entry),
-          brand_name: (e.brands as { name?: string } | null)?.name,
-          ad_name: (e.ads as { name?: string } | null)?.name,
-        })),
+        // The API returns Drizzle-shaped rows: camelCase columns plus the
+        // joined `brand` and `ad` relation keys (singular). The previous
+        // code read `e.brands` / `e.ads` (plural) and snake_case column
+        // names, which is why every card said "Unknown ad" / "Brand: —".
+        list.map((e: Record<string, unknown>) => {
+          const row = e as unknown as Entry;
+          return {
+            ...row,
+            brandName: (e.brand as { name?: string } | null)?.name,
+            adName: (e.ad as { name?: string } | null)?.name,
+          };
+        }),
       );
     } catch {
       // noop
@@ -222,7 +239,7 @@ export default function ApprovalsPage() {
                         {actionLabel[entry.recommendation]}
                       </Badge>
                       <CardTitle className="truncate">
-                        {entry.ad_name || "Unknown ad"}
+                        {entry.adName || "Unknown ad"}
                       </CardTitle>
                     </div>
                     <Badge variant="warning">Pending</Badge>
@@ -271,29 +288,40 @@ export default function ApprovalsPage() {
                     <div className="flex-1 min-w-0 space-y-1">
                       <p className="text-xs text-gray-600">
                         <span className="text-gray-400">Brand:</span>{" "}
-                        {entry.brand_name || "—"}
+                        {entry.brandName || "—"}
                       </p>
                       <p className="text-xs text-gray-600">
                         <span className="text-gray-400">Reason:</span>{" "}
                         {entry.reason}
                       </p>
-                      {entry.risk_level && (
+                      {entry.riskLevel && (
                         <p className="text-xs">
                           <span className="text-gray-400">Risk:</span>{" "}
                           <span
                             className={cn(
                               "font-medium uppercase",
-                              riskColor[entry.risk_level],
+                              riskColor[entry.riskLevel],
                             )}
                           >
-                            {entry.risk_level}
+                            {entry.riskLevel}
                           </span>
                         </p>
                       )}
                     </div>
                   </div>
 
-                  {entry.guard_reasoning && (
+                  {/* What pressing Approve actually does. Spelled out so the
+                      user doesn't have to decode the small action badge. */}
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
+                    <span className="font-semibold uppercase tracking-wider text-[10px] text-indigo-700">
+                      If approved
+                    </span>
+                    <span className="ml-2">
+                      {actionDescription[entry.recommendation]}
+                    </span>
+                  </div>
+
+                  {entry.guardReasoning && (
                     <div>
                       <button
                         onClick={() => toggleExpand(entry.id)}
@@ -308,7 +336,7 @@ export default function ApprovalsPage() {
                       </button>
                       {isExpanded && (
                         <div className="mt-2 p-3 rounded-lg bg-gray-50 border border-gray-200 text-xs text-gray-700 whitespace-pre-wrap">
-                          {entry.guard_reasoning}
+                          {entry.guardReasoning}
                         </div>
                       )}
                     </div>
