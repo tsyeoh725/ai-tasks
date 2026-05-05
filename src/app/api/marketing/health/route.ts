@@ -6,6 +6,7 @@ import { getSessionUser, unauthorized } from "@/lib/session";
 import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { resolveWorkspaceForUser } from "@/lib/workspace";
 import { brandsAccessibleWhere } from "@/lib/brand-access";
+import { getAnthropicKey } from "@/lib/app-config";
 
 // POST /api/marketing/health — connectivity check for Meta / Claude / Telegram / DB.
 // Returns a uniform shape per service: { ok: boolean, message: string } so the
@@ -69,11 +70,16 @@ export async function POST() {
     results.meta = { ok: false, message: e instanceof Error ? e.message : "Failed" };
   }
 
-  // 2. Claude API — tiny probe.
+  // 2. Claude API — tiny probe. Resolve through app_config the same way
+  //    AI Guard does (Settings → AI rotation lives there); env var is just
+  //    the last-resort fallback.
   try {
-    const key = process.env.ANTHROPIC_API_KEY;
+    const key = await getAnthropicKey();
     if (!key) {
-      results.claude = { ok: false, message: "ANTHROPIC_API_KEY not set" };
+      results.claude = {
+        ok: false,
+        message: "No Anthropic API key — set one under Settings → AI",
+      };
     } else {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -104,32 +110,33 @@ export async function POST() {
     results.claude = { ok: false, message: e instanceof Error ? e.message : "Failed" };
   }
 
-  // 3. Telegram — user-scoped. Check if this user has a linked chat AND the bot token works.
+  // 3. Telegram — primary check is "is the bot token valid and reachable?".
+  //    Whether *this* user has a personal chat linked is reported as a hint
+  //    in the message, not as a failure: the bot can still send / receive
+  //    updates without per-user linking, and notifications are only blocked
+  //    for the unlinked user, not the system as a whole.
   try {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) {
       results.telegram = { ok: false, message: "TELEGRAM_BOT_TOKEN not set" };
     } else {
-      const link = await db.query.telegramLinks.findFirst({
-        where: eq(telegramLinks.userId, user.id),
-      });
-      if (!link) {
-        results.telegram = { ok: false, message: "User has no linked Telegram chat" };
-      } else {
-        const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-        const data = (await res.json()) as {
-          ok?: boolean;
-          result?: { username?: string };
-          description?: string;
+      const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+      const data = (await res.json()) as {
+        ok?: boolean;
+        result?: { username?: string };
+        description?: string;
+      };
+      if (data.ok) {
+        const link = await db.query.telegramLinks.findFirst({
+          where: eq(telegramLinks.userId, user.id),
+        });
+        const linkHint = link ? "your chat is linked" : "your chat is not linked";
+        results.telegram = {
+          ok: true,
+          message: `Bot @${data.result?.username ?? "?"} reachable — ${linkHint}`,
         };
-        if (data.ok) {
-          results.telegram = {
-            ok: true,
-            message: `Linked to @${data.result?.username ?? "bot"}`,
-          };
-        } else {
-          results.telegram = { ok: false, message: data.description || "Invalid bot token" };
-        }
+      } else {
+        results.telegram = { ok: false, message: data.description || "Invalid bot token" };
       }
     }
   } catch (e) {
