@@ -281,27 +281,30 @@ export default function AdsPage() {
     if (syncingAll) return;
     setSyncingAll(true);
     setStatus(null);
-    let ok = 0;
-    let failed = 0;
+    // Kick off all brand syncs in parallel as background jobs. The status
+    // badge in the header tracks progress; we don't await completion.
     const total = brands.length;
-    for (let i = 0; i < brands.length; i++) {
-      const b = brands[i];
-      setStatus(`Syncing ${b.name} (${i + 1}/${total})…`);
-      try {
-        const res = await fetch("/api/meta/sync", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ brandId: b.id }),
-        });
-        if (res.ok) ok++;
-        else failed++;
-      } catch {
-        failed++;
-      }
-    }
-    setStatus(`Sync complete — ${ok}/${total} brands updated${failed ? `, ${failed} failed` : ""}`);
+    let queued = 0;
+    let failed = 0;
+    await Promise.all(
+      brands.map(async (b) => {
+        try {
+          const res = await fetch("/api/meta/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ brandId: b.id }),
+          });
+          if (res.ok || res.status === 202) queued++;
+          else failed++;
+        } catch {
+          failed++;
+        }
+      }),
+    );
+    setStatus(
+      `Queued ${queued}/${total} brand sync${queued === 1 ? "" : "s"} in the background${failed ? ` — ${failed} failed to queue` : ""}. Watch the status badge.`,
+    );
     setSyncingAll(false);
-    await fetchData();
   }
 
   async function handleRunAudit() {
@@ -309,45 +312,24 @@ export default function AdsPage() {
     setAuditing(true);
     setStatus(null);
 
-    // Audit per-brand so we can show "Auditing X (i/N)…" progress, mirroring
-    // the Sync all data flow. The endpoint already accepts { brandId } and
-    // returns { results: [...] } with one entry; we just aggregate.
-    type AuditResult = {
-      brandName: string;
-      recommendationsCount: number;
-      pending: number;
-      tasks?: { created: number };
-      errors?: string[];
-    };
-    const aggregate: AuditResult[] = [];
-    let failed = 0;
-    const total = brands.length;
-    for (let i = 0; i < brands.length; i++) {
-      const b = brands[i];
-      setStatus(`Auditing ${b.name} (${i + 1}/${total})…`);
-      try {
-        const res = await fetch("/api/cron/monitor", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ brandId: b.id }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && Array.isArray(data.results)) {
-          aggregate.push(...(data.results as AuditResult[]));
-        } else {
-          failed++;
-        }
-      } catch {
-        failed++;
-      }
+    // Kick off audit as a single background job covering all accessible
+    // brands (the endpoint scans every active brand the user can see when
+    // brandId is omitted). Status badge in the header tracks completion.
+    let queued = false;
+    try {
+      const res = await fetch("/api/cron/monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      queued = res.ok || res.status === 202;
+    } catch {
+      queued = false;
     }
-
-    const totalRecs = aggregate.reduce((s, r) => s + (r.recommendationsCount || 0), 0);
-    const totalPending = aggregate.reduce((s, r) => s + (r.pending || 0), 0);
-    const totalTasks = aggregate.reduce((s, r) => s + (r.tasks?.created || 0), 0);
-    const failedSuffix = failed > 0 ? `, ${failed} failed` : "";
     setStatus(
-      `Audit complete — ${aggregate.length}/${total} brand${aggregate.length === 1 ? "" : "s"} scanned, ${totalRecs} recommendation${totalRecs === 1 ? "" : "s"}, ${totalPending} pending approval, ${totalTasks} task${totalTasks === 1 ? "" : "s"} created${failedSuffix}`,
+      queued
+        ? "Audit queued in the background — watch the status badge for completion."
+        : "Failed to queue audit — try again.",
     );
     setAuditing(false);
   }

@@ -15,6 +15,7 @@ import {
 import { resolveWorkspaceForUser } from "@/lib/workspace";
 import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
 import { flushLogs, log } from "@/lib/marketing/logger";
+import { startJob } from "@/lib/jobs";
 
 function mapRecommendationToKind(action: string): DetectedConditionKind | null {
   // Map monitor recommendations to task-generator conditions where sensible.
@@ -85,6 +86,34 @@ export async function POST(req: Request) {
     return NextResponse.json({ message: "No brands to scan", results: [] });
   }
 
+  // UI-triggered runs go to the background so the operator can navigate away;
+  // cron-triggered runs stay synchronous so the scheduler can log the outcome.
+  const runAudit = () => runAuditTargets(targets);
+
+  if (!auth.cron && auth.userId) {
+    const handle = await startJob({
+      userId: auth.userId,
+      type: "monitor_audit",
+      label:
+        targets.length === 1
+          ? `Audit — ${targets[0].name}`
+          : `Audit — ${targets.length} brands`,
+      payload: { brandIds: targets.map((t) => t.id) },
+      work: runAudit,
+    });
+    return NextResponse.json(
+      { queued: true, jobId: handle.jobId, brandCount: targets.length },
+      { status: 202 },
+    );
+  }
+
+  const results = await runAudit();
+  return NextResponse.json({ message: "Monitor cycle complete", results });
+}
+
+async function runAuditTargets(
+  targets: Array<{ id: string; userId: string; name: string; projectId: string | null }>,
+) {
   const results: Array<MonitorCycleResult & { tasks?: { created: number; skipped: number } }> = [];
 
   // Group log flushes per (user, audit run) so the Logs page surfaces this run
@@ -145,6 +174,6 @@ export async function POST(req: Request) {
     await flushLogs(`${sessionLabel}-${target.id}`, target.userId);
   }
 
-  return NextResponse.json({ message: "Monitor cycle complete", results });
+  return results;
 }
 

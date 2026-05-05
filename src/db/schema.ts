@@ -872,6 +872,25 @@ export const appConfig = sqliteTable("app_config", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ---- Sync Jobs ----
+// Background-job tracker. Long-running endpoints (Meta sync, monitor audit,
+// sheet sync) insert a row, return 202, then update status from a detached
+// promise. UI polls /api/jobs/active to surface progress + failures so the
+// operator can navigate away while work continues.
+export const syncJobs = sqliteTable("sync_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  type: text("type").notNull(), // "meta_sync" | "monitor_audit" | "leads_sheets_sync" | ...
+  status: text("status", { enum: ["queued", "running", "succeeded", "failed"] }).notNull().default("queued"),
+  label: text("label"), // human-readable summary, e.g. "Sync brand: Acme"
+  payload: text("payload"), // JSON input for context
+  result: text("result"), // JSON output on success
+  error: text("error"), // error message on failure
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  finishedAt: integer("finished_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ============ WORKFLOW CHAINS ============
 // A chain is a sequence of tasks that auto-advance when the current task is completed/approved.
 export const workflowChains = sqliteTable("workflow_chains", {
@@ -1257,6 +1276,10 @@ export const marketingAuditLogRelations = relations(marketingAuditLog, ({ one })
 
 export const globalSettingsRelations = relations(globalSettings, ({ one }) => ({
   user: one(users, { fields: [globalSettings.userId], references: [users.id] }),
+}));
+
+export const syncJobsRelations = relations(syncJobs, ({ one }) => ({
+  user: one(users, { fields: [syncJobs.userId], references: [users.id] }),
 }));
 
 export const projectStatusesRelations = relations(projectStatuses, ({ one, many }) => ({

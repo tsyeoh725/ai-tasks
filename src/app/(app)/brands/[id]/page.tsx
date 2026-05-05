@@ -204,7 +204,7 @@ export default function BrandDetailPage({
 
   async function handleResync() {
     setSyncing(true);
-    setStatus({ kind: "info", message: "Resyncing data from Meta..." });
+    setStatus({ kind: "info", message: "Queueing resync…" });
     try {
       const res = await fetch("/api/meta/sync", {
         method: "POST",
@@ -212,8 +212,11 @@ export default function BrandDetailPage({
         body: JSON.stringify({ brandId: id }),
       });
       const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setStatus({ kind: data?.synced?.chunksFailed ? "info" : "success", message: formatSyncSummary("Resync", data?.synced) });
+      if (res.ok || res.status === 202) {
+        setStatus({
+          kind: "success",
+          message: "Resync queued — running in the background, watch the status badge.",
+        });
       } else {
         setStatus({
           kind: "error",
@@ -348,13 +351,16 @@ export default function BrandDetailPage({
 
   async function handleRunMonitor() {
     setRunning(true);
-    setStatus({ kind: "info", message: "Running monitor..." });
+    setStatus({ kind: "info", message: "Queueing monitor run…" });
     try {
       const res = await fetch(`/api/cron/monitor?brandId=${id}`, {
         method: "POST",
       });
-      if (res.ok) {
-        setStatus({ kind: "success", message: "Monitor run complete" });
+      if (res.ok || res.status === 202) {
+        setStatus({
+          kind: "success",
+          message: "Monitor queued — running in the background, watch the status badge.",
+        });
       } else {
         setStatus({ kind: "error", message: "Monitor run failed" });
       }

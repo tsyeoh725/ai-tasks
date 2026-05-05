@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   XCircle,
@@ -25,7 +25,6 @@ type BudgetLevel = "ad_set" | "campaign_daily" | "campaign_lifetime" | "none";
 type BudgetInfo = {
   level: BudgetLevel;
   current: number | null;
-  // executor multiplies by 1.5 and rounds to cents
   projected: number | null;
 };
 
@@ -35,6 +34,8 @@ type Entry = {
   brandName?: string;
   adId: string | null;
   adName?: string;
+  adSetId?: string | null;
+  campaignId?: string | null;
   recommendation: RecommendationAction;
   reason: string;
   guardReasoning?: string | null;
@@ -42,6 +43,17 @@ type Entry = {
   riskLevel: Risk | null;
   guardVerdict: Verdict;
   createdAt: string;
+  budgetInfo?: BudgetInfo;
+};
+
+// A Group is what the UI actually renders. Multiple journal entries that
+// would result in the same Meta call get folded into one card so the
+// operator approves once instead of N times. boost_budget rows that share
+// an ad set (or share a CBO campaign) collapse; everything else stays 1:1.
+type Group = {
+  key: string;
+  members: Entry[];
+  representative: Entry;
   budgetInfo?: BudgetInfo;
 };
 
@@ -62,11 +74,6 @@ const actionLabel: Record<RecommendationAction, string> = {
   duplicate: "DUPLICATE",
 };
 
-// Plain-English description of what gets executed on approval — surfaced
-// next to the Approve button so the user knows the consequence of clicking
-// it, instead of having to decode the action badge. boost_budget is dynamic
-// (see describeBoostBudget) because the executor targets ad-set or campaign
-// budget depending on which one is set.
 const actionDescription: Record<Exclude<RecommendationAction, "boost_budget">, string> = {
   kill: "Permanently delete this ad on Meta. Cannot be undone.",
   pause: "Pause this ad on Meta. You can re-activate it later.",
@@ -125,6 +132,44 @@ function computeBudgetInfo(raw: Record<string, unknown>): BudgetInfo {
   return { level: "none", current: null, projected: null };
 }
 
+// boost_budget entries collapse when they target the same Meta-side budget.
+// Ad-set-level rows fold by adSetId; CBO rows fold by campaignId. Anything
+// else stays per-entry so each card represents exactly one Meta side-effect.
+function groupKey(entry: Entry): string {
+  if (entry.recommendation !== "boost_budget" || !entry.budgetInfo) {
+    return `single:${entry.id}`;
+  }
+  const level = entry.budgetInfo.level;
+  if (level === "ad_set" && entry.adSetId) {
+    return `boost:adset:${entry.adSetId}`;
+  }
+  if ((level === "campaign_daily" || level === "campaign_lifetime") && entry.campaignId) {
+    return `boost:campaign:${entry.campaignId}`;
+  }
+  return `single:${entry.id}`;
+}
+
+function buildGroups(entries: Entry[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const entry of entries) {
+    const key = groupKey(entry);
+    const existing = map.get(key);
+    if (existing) {
+      existing.members.push(entry);
+    } else {
+      map.set(key, {
+        key,
+        representative: entry,
+        members: [entry],
+        budgetInfo: entry.budgetInfo,
+      });
+    }
+  }
+  // Stable order: preserve representative.createdAt desc (entries already
+  // arrive newest-first from the API).
+  return Array.from(map.values());
+}
+
 const riskColor: Record<Risk, string> = {
   low: "text-emerald-300",
   medium: "text-amber-300",
@@ -136,33 +181,31 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<string | null>(null);
-  // Per-row editable state. budgetInputs is the string the user is typing
-  // (string so partial entries like "" or "1." don't fight the input);
-  // remarks is the textarea content. Keyed by entry id.
+  // Per-group inputs, keyed by group.key (not entry id) so a single budget /
+  // remark applies to all collapsed entries in that group.
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
   const [remarks, setRemarks] = useState<Record<string, string>>({});
 
-  const fetchPending = useCallback(async () => {
-    setLoading(true);
+  const fetchPending = useCallback(async (opts: { showSpinner?: boolean } = {}) => {
+    if (opts.showSpinner !== false) setLoading(true);
     try {
       const res = await fetch("/api/approvals");
       const data = await res.json();
       const list = Array.isArray(data) ? data : data.entries || [];
       setEntries(
-        // The API returns Drizzle-shaped rows: camelCase columns plus the
-        // joined `brand` and `ad` relation keys (singular). The previous
-        // code read `e.brands` / `e.ads` (plural) and snake_case column
-        // names, which is why every card said "Unknown ad" / "Brand: —".
         list.map((e: Record<string, unknown>) => {
           const row = e as unknown as Entry;
           const budgetInfo =
             row.recommendation === "boost_budget" ? computeBudgetInfo(e) : undefined;
+          const adSet = e.adSet as { id?: string; campaign?: { id?: string } | null } | null;
           return {
             ...row,
             brandName: (e.brand as { name?: string } | null)?.name,
             adName: (e.ad as { name?: string } | null)?.name,
+            adSetId: adSet?.id ?? null,
+            campaignId: adSet?.campaign?.id ?? null,
             budgetInfo,
           };
         }),
@@ -170,111 +213,183 @@ export default function ApprovalsPage() {
     } catch {
       // noop
     }
-    setLoading(false);
+    if (opts.showSpinner !== false) setLoading(false);
   }, []);
 
-  // Seed the per-row inputs with sensible defaults whenever the entry list
-  // changes: boost_budget rows pre-fill the +50% projection, others stay
-  // empty. Existing user-typed values are preserved.
+  const groups = useMemo(() => buildGroups(entries), [entries]);
+
+  // Seed per-group budget defaults whenever groups change. We use the
+  // representative entry's projected (×1.5) value as the prefilled "new
+  // budget"; the user can then overwrite with whatever they actually want.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seeding derived input defaults from groups
     setBudgetInputs((prev) => {
       const next = { ...prev };
-      for (const entry of entries) {
+      for (const group of groups) {
+        const info = group.budgetInfo;
         if (
-          entry.recommendation === "boost_budget" &&
-          next[entry.id] === undefined &&
-          entry.budgetInfo?.projected !== null &&
-          entry.budgetInfo?.projected !== undefined
+          group.representative.recommendation === "boost_budget" &&
+          next[group.key] === undefined &&
+          info?.projected !== null &&
+          info?.projected !== undefined
         ) {
-          next[entry.id] = entry.budgetInfo.projected.toFixed(2);
+          next[group.key] = info.projected.toFixed(2);
         }
       }
       return next;
     });
-  }, [entries]);
+  }, [groups]);
 
+  // Initial load + visibility-aware 10s poll. We pause polling when the tab
+  // is hidden so we don't burn DB queries while the user is in another tab.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount/dep change; not migrating to Suspense
-    fetchPending();
+    let cancelled = false;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const tick = () => {
+      if (cancelled || document.hidden) return;
+      void fetchPending({ showSpinner: false });
+    };
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount fetch + interval poll
+    void fetchPending();
+    interval = setInterval(tick, 10_000);
+
+    const onVisibility = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [fetchPending]);
 
-  async function handleAction(id: string, verdict: "approved" | "rejected") {
-    setProcessing((prev) => new Set(prev).add(id));
-    setStatus(null);
-    try {
-      const entry = entries.find((e) => e.id === id);
-      const remark = remarks[id]?.trim() || undefined;
-      // Only send overrideBudget for boost_budget approvals, and only when
-      // it parses to a positive finite number. Empty / unchanged input is
-      // sent as undefined so the executor falls back to its default *1.5.
-      let overrideBudget: number | undefined;
-      if (verdict === "approved" && entry?.recommendation === "boost_budget") {
-        const raw = budgetInputs[id];
-        const parsed = raw !== undefined && raw !== "" ? Number(raw) : NaN;
-        if (Number.isFinite(parsed) && parsed > 0) {
-          overrideBudget = parsed;
-        }
+  // Drop selections that no longer correspond to a visible group (e.g. after
+  // an approval, or when a poll tick removes processed entries).
+  useEffect(() => {
+    const live = new Set(groups.map((g) => g.key));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prune stale selections after group recompute
+    setSelectedGroups((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const k of prev) {
+        if (live.has(k)) next.add(k);
+        else changed = true;
       }
-      const res = await fetch(`/api/approvals/${id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verdict, userRemark: remark, overrideBudget }),
-      });
-      if (res.ok) {
-        setEntries((prev) => prev.filter((e) => e.id !== id));
-        setSelected((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
-        setBudgetInputs((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        setRemarks((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-        setStatus(verdict === "approved" ? "Approved & executed" : "Rejected");
-      } else {
-        setStatus("Action failed");
-      }
-    } catch {
-      setStatus("Action failed");
+      return changed ? next : prev;
+    });
+  }, [groups]);
+
+  // Resolve a per-group override+remark, then fire one POST per member entry.
+  // We loop sequentially so the executor doesn't race on the same Meta object;
+  // for typical groups (1–5 ads in an ad set) this finishes in ~a few seconds.
+  async function handleGroupAction(group: Group, verdict: "approved" | "rejected") {
+    const memberIds = group.members.map((m) => m.id);
+    const remark = remarks[group.key]?.trim() || undefined;
+    let overrideBudget: number | undefined;
+    if (verdict === "approved" && group.representative.recommendation === "boost_budget") {
+      const raw = budgetInputs[group.key];
+      const parsed = raw !== undefined && raw !== "" ? Number(raw) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) overrideBudget = parsed;
     }
+
     setProcessing((prev) => {
       const next = new Set(prev);
-      next.delete(id);
+      for (const id of memberIds) next.add(id);
       return next;
     });
+    setStatus(null);
+
+    let okCount = 0;
+    let failCount = 0;
+    for (const id of memberIds) {
+      try {
+        const res = await fetch(`/api/approvals/${id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ verdict, userRemark: remark, overrideBudget }),
+        });
+        if (res.ok) okCount++;
+        else failCount++;
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (okCount > 0) {
+      setEntries((prev) => prev.filter((e) => !memberIds.includes(e.id)));
+      setSelectedGroups((prev) => {
+        const next = new Set(prev);
+        next.delete(group.key);
+        return next;
+      });
+      setBudgetInputs((prev) => {
+        const next = { ...prev };
+        delete next[group.key];
+        return next;
+      });
+      setRemarks((prev) => {
+        const next = { ...prev };
+        delete next[group.key];
+        return next;
+      });
+    }
+
+    setProcessing((prev) => {
+      const next = new Set(prev);
+      for (const id of memberIds) next.delete(id);
+      return next;
+    });
+
+    const verb = verdict === "approved" ? "Approved" : "Rejected";
+    if (failCount === 0) {
+      setStatus(
+        memberIds.length === 1
+          ? `${verb} & executed`
+          : `${verb} ${okCount} ad${okCount === 1 ? "" : "s"} in this group`,
+      );
+    } else {
+      setStatus(`${verb} ${okCount}/${memberIds.length} — ${failCount} failed`);
+    }
   }
 
   async function handleBulk(verdict: "approved" | "rejected") {
-    const ids = Array.from(selected);
-    for (const id of ids) {
-      await handleAction(id, verdict);
+    const targets = groups.filter((g) => selectedGroups.has(g.key));
+    for (const g of targets) {
+      await handleGroupAction(g, verdict);
     }
   }
 
-  function toggleExpand(id: string) {
+  function toggleExpand(key: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
 
-  function toggleSelect(id: string) {
-    setSelected((prev) => {
+  function toggleSelect(key: string) {
+    setSelectedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
+
+  function toggleSelectAll() {
+    setSelectedGroups((prev) => {
+      // If everything is already selected, clear; otherwise select all.
+      if (prev.size === groups.length) return new Set();
+      return new Set(groups.map((g) => g.key));
+    });
+  }
+
+  const allSelected = groups.length > 0 && selectedGroups.size === groups.length;
+  const someSelected = selectedGroups.size > 0 && !allSelected;
 
   return (
     <div className="max-w-5xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-5 animate-fade-in">
@@ -287,26 +402,42 @@ export default function ApprovalsPage() {
             Review and approve/reject AI Guard recommendations
           </p>
         </div>
-        {selected.size > 0 && (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleBulk("approved")}
-            >
-              <CheckCircle2 />
-              Approve {selected.size}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleBulk("rejected")}
-            >
-              <XCircle />
-              Reject {selected.size}
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {groups.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-gray-600 select-none cursor-pointer pr-2">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleSelectAll}
+                className="h-4 w-4 rounded accent-indigo-500"
+              />
+              Select all ({groups.length})
+            </label>
+          )}
+          {selectedGroups.size > 0 && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleBulk("approved")}
+              >
+                <CheckCircle2 />
+                Approve {selectedGroups.size}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleBulk("rejected")}
+              >
+                <XCircle />
+                Reject {selectedGroups.size}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       {status && (
@@ -324,7 +455,7 @@ export default function ApprovalsPage() {
             />
           ))}
         </div>
-      ) : entries.length === 0 ? (
+      ) : groups.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Inbox className="w-12 h-12 text-gray-300 mb-3" />
@@ -334,28 +465,38 @@ export default function ApprovalsPage() {
         </Card>
       ) : (
         <div className="space-y-3">
-          {entries.map((entry) => {
-            const isProcessing = processing.has(entry.id);
-            const isExpanded = expanded.has(entry.id);
-            const isSelected = selected.has(entry.id);
+          {groups.map((group) => {
+            const entry = group.representative;
+            const groupBusy = group.members.some((m) => processing.has(m.id));
+            const isExpanded = expanded.has(group.key);
+            const isSelected = selectedGroups.has(group.key);
             const confidencePct = Math.round((entry.confidence ?? 0) * 100);
+            const memberCount = group.members.length;
+            const isGrouped = memberCount > 1;
+            const otherNames = group.members
+              .map((m) => m.adName)
+              .filter((n): n is string => Boolean(n));
 
             return (
-              <Card key={entry.id}>
+              <Card key={group.key}>
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        onChange={() => toggleSelect(entry.id)}
+                        onChange={() => toggleSelect(group.key)}
                         className="h-4 w-4 rounded accent-indigo-500 shrink-0"
                       />
                       <Badge variant={actionVariant[entry.recommendation]}>
                         {actionLabel[entry.recommendation]}
                       </Badge>
                       <CardTitle className="truncate">
-                        {entry.adName || "Unknown ad"}
+                        {isGrouped
+                          ? `${memberCount} ads sharing a ${
+                              group.budgetInfo?.level === "ad_set" ? "ad set" : "campaign"
+                            }`
+                          : entry.adName || "Unknown ad"}
                       </CardTitle>
                     </div>
                     <Badge variant="warning">Pending</Badge>
@@ -363,7 +504,6 @@ export default function ApprovalsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-4">
-                    {/* Confidence gauge */}
                     <div className="shrink-0">
                       <div className="text-[10px] uppercase tracking-wider text-gray-400 mb-1">
                         Confidence
@@ -423,23 +563,29 @@ export default function ApprovalsPage() {
                           </span>
                         </p>
                       )}
+                      {isGrouped && otherNames.length > 0 && (
+                        <p className="text-[11px] text-gray-500">
+                          <span className="text-gray-400">Affects:</span>{" "}
+                          {otherNames.slice(0, 3).join(", ")}
+                          {otherNames.length > 3 ? `, +${otherNames.length - 3} more` : ""}
+                        </p>
+                      )}
                     </div>
                   </div>
 
-                  {/* What pressing Approve actually does. Spelled out so the
-                      user doesn't have to decode the small action badge. */}
                   <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900">
                     <span className="font-semibold uppercase tracking-wider text-[10px] text-indigo-700">
                       If approved
                     </span>
                     <span className="ml-2">
                       {entry.recommendation === "boost_budget"
-                        ? describeBoostBudget(entry.budgetInfo)
+                        ? describeBoostBudget(group.budgetInfo)
                         : actionDescription[entry.recommendation]}
                     </span>
-                    {entry.recommendation === "boost_budget" && entry.budgetInfo && (
+                    {entry.recommendation === "boost_budget" && group.budgetInfo && (
                       <div className="mt-1 text-[10px] uppercase tracking-wider text-indigo-700">
-                        Target: {budgetLevelLabel[entry.budgetInfo.level]}
+                        Target: {budgetLevelLabel[group.budgetInfo.level]}
+                        {isGrouped && ` · 1 Meta call covers all ${memberCount} ads`}
                       </div>
                     )}
                   </div>
@@ -447,7 +593,7 @@ export default function ApprovalsPage() {
                   {entry.guardReasoning && (
                     <div>
                       <button
-                        onClick={() => toggleExpand(entry.id)}
+                        onClick={() => toggleExpand(group.key)}
                         className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 transition-colors"
                       >
                         {isExpanded ? (
@@ -466,53 +612,53 @@ export default function ApprovalsPage() {
                   )}
 
                   {entry.recommendation === "boost_budget" &&
-                    entry.budgetInfo &&
-                    entry.budgetInfo.level !== "none" && (
+                    group.budgetInfo &&
+                    group.budgetInfo.level !== "none" && (
                       <div>
                         <label
-                          htmlFor={`budget-${entry.id}`}
+                          htmlFor={`budget-${group.key}`}
                           className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
                         >
                           New budget (RM)
                         </label>
                         <input
-                          id={`budget-${entry.id}`}
+                          id={`budget-${group.key}`}
                           type="number"
                           inputMode="decimal"
                           step="0.01"
                           min="0"
-                          value={budgetInputs[entry.id] ?? ""}
+                          value={budgetInputs[group.key] ?? ""}
                           onChange={(ev) =>
                             setBudgetInputs((prev) => ({
                               ...prev,
-                              [entry.id]: ev.target.value,
+                              [group.key]: ev.target.value,
                             }))
                           }
-                          disabled={isProcessing}
+                          disabled={groupBusy}
                           className="w-32 rounded-md border border-gray-300 px-2 py-1 text-xs font-mono"
                         />
                         <span className="ml-2 text-[10px] text-gray-500">
-                          default {fmtRM(entry.budgetInfo.projected ?? 0)} (current ×1.5)
+                          default {fmtRM(group.budgetInfo.projected ?? 0)} (current ×1.5)
                         </span>
                       </div>
                     )}
 
                   <div>
                     <label
-                      htmlFor={`remark-${entry.id}`}
+                      htmlFor={`remark-${group.key}`}
                       className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
                     >
                       Remark for AI (optional)
                     </label>
                     <textarea
-                      id={`remark-${entry.id}`}
+                      id={`remark-${group.key}`}
                       rows={2}
                       placeholder="e.g. Don't boost above RM200 for this brand"
-                      value={remarks[entry.id] ?? ""}
+                      value={remarks[group.key] ?? ""}
                       onChange={(ev) =>
-                        setRemarks((prev) => ({ ...prev, [entry.id]: ev.target.value }))
+                        setRemarks((prev) => ({ ...prev, [group.key]: ev.target.value }))
                       }
-                      disabled={isProcessing}
+                      disabled={groupBusy}
                       className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs"
                     />
                     <p className="mt-1 text-[10px] text-gray-400">
@@ -524,24 +670,24 @@ export default function ApprovalsPage() {
                     <Button
                       size="sm"
                       variant="primary"
-                      onClick={() => handleAction(entry.id, "approved")}
-                      disabled={isProcessing}
+                      onClick={() => handleGroupAction(group, "approved")}
+                      disabled={groupBusy}
                     >
-                      {isProcessing ? (
+                      {groupBusy ? (
                         <Loader2 className="animate-spin" />
                       ) : (
                         <CheckCircle2 />
                       )}
-                      Approve
+                      Approve{isGrouped ? ` (${memberCount})` : ""}
                     </Button>
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => handleAction(entry.id, "rejected")}
-                      disabled={isProcessing}
+                      onClick={() => handleGroupAction(group, "rejected")}
+                      disabled={groupBusy}
                     >
                       <XCircle />
-                      Reject
+                      Reject{isGrouped ? ` (${memberCount})` : ""}
                     </Button>
                   </div>
                 </CardContent>

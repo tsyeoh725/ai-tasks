@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationBell } from "@/components/notification-bell";
+import { JobStatusBadge } from "@/components/job-status-badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
 import { CreateClientDialog } from "@/components/create-client-dialog";
@@ -181,9 +184,23 @@ export function TopHeader() {
         </button>
 
         {/* Logo */}
-        <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 mr-4">
-          AI Tasks
-        </div>
+        <Link
+          href="/"
+          className="flex items-center gap-2 mr-4 rounded-md hover:opacity-80 transition-opacity"
+          aria-label="AI Tasks home"
+        >
+          <Image
+            src="/logo.png"
+            alt=""
+            width={28}
+            height={28}
+            priority
+            className="rounded-md"
+          />
+          <span className="font-semibold text-sm text-slate-900 dark:text-slate-100">
+            AI Tasks
+          </span>
+        </Link>
 
         {/* Create command menu */}
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
@@ -232,6 +249,7 @@ export function TopHeader() {
         {/* Right controls */}
         <div className="flex items-center gap-1 ml-auto">
           <ThemeToggle compact />
+          <JobStatusBadge />
           <NotificationBell />
           <button
             onClick={() => setShortcutsOpen(true)}

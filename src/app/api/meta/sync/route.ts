@@ -7,10 +7,11 @@ import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/
 import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { canAccessBrand } from "@/lib/brand-access";
 import { flushLogs, log } from "@/lib/marketing/logger";
+import { startJob } from "@/lib/jobs";
 
 // POST /api/meta/sync  { brandId, startDate?, endDate? }
-// Note: our sync implementation uses a trailing-window (dateRange in days) rather than
-// start/end, so if startDate is provided we derive a day-count from it (ignoring endDate).
+// Returns 202 with { jobId } — the actual sync runs detached so the client
+// can navigate away. Poll /api/jobs/active for status.
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
@@ -52,7 +53,6 @@ export async function POST(req: Request) {
   const costActionType = costMetric?.actionType || "lead";
   const insightsDateRange = (parsedConfig.insightsDateRange as number | undefined) ?? 7;
 
-  // Derive day-count from startDate if supplied, otherwise use brand default.
   let dateRange = insightsDateRange;
   if (startDate) {
     const start = new Date(startDate);
@@ -60,54 +60,57 @@ export async function POST(req: Request) {
     if (!Number.isNaN(diff) && diff > 0) dateRange = diff;
   }
 
-  const sessionLabel = `sync-${brand.name}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  log("info", "sync", `Manual sync started for ${brand.name}`, {
-    brandId: brand.id,
-    dateRange,
-    costActionType,
+  const handle = await startJob({
+    userId: user.id,
+    type: "meta_sync",
+    label: `Meta sync — ${brand.name}`,
+    payload: { brandId, dateRange, costActionType },
+    work: async () => {
+      const sessionLabel = `sync-${brand.name}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      log("info", "sync", `Background sync started for ${brand.name}`, {
+        brandId: brand.id,
+        dateRange,
+        costActionType,
+      });
+      try {
+        const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, user.id, accessToken);
+        const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, user.id, accessToken);
+        const insights = await syncAdsWithInsights(
+          brand.metaAccountId,
+          brand.id,
+          user.id,
+          accessToken,
+          dateRange,
+          costActionType,
+        );
+        log(
+          insights.chunksFailed > 0 ? "warn" : "info",
+          "sync",
+          `Sync complete for ${brand.name}`,
+          { campaignCount, adSetCount, insights },
+        );
+        await flushLogs(sessionLabel, user.id);
+        return {
+          campaigns: campaignCount,
+          adSets: adSetCount,
+          ads: insights.ads,
+          chunksTotal: insights.chunksTotal,
+          chunksSucceeded: insights.chunksSucceeded,
+          chunksFailed: insights.chunksFailed,
+          failedChunks: insights.failedChunks,
+        };
+      } catch (err) {
+        log("error", "sync", `Sync failed for ${brand.name}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await flushLogs(sessionLabel, user.id);
+        throw err;
+      }
+    },
   });
 
-  try {
-    const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, user.id, accessToken);
-    const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, user.id, accessToken);
-    const insights = await syncAdsWithInsights(
-      brand.metaAccountId,
-      brand.id,
-      user.id,
-      accessToken,
-      dateRange,
-      costActionType,
-    );
-
-    log(
-      insights.chunksFailed > 0 ? "warn" : "info",
-      "sync",
-      `Sync complete for ${brand.name}`,
-      { campaignCount, adSetCount, insights },
-    );
-
-    await flushLogs(sessionLabel, user.id);
-
-    return NextResponse.json({
-      success: true,
-      synced: {
-        campaigns: campaignCount,
-        adSets: adSetCount,
-        ads: insights.ads,
-        chunksTotal: insights.chunksTotal,
-        chunksSucceeded: insights.chunksSucceeded,
-        chunksFailed: insights.chunksFailed,
-        failedChunks: insights.failedChunks,
-      },
-    });
-  } catch (err) {
-    log("error", "sync", `Sync failed for ${brand.name}`, {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    await flushLogs(sessionLabel, user.id);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Sync failed" },
-      { status: 500 },
-    );
-  }
+  return NextResponse.json(
+    { success: true, queued: true, jobId: handle.jobId },
+    { status: 202 },
+  );
 }
