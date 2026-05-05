@@ -7,7 +7,7 @@ import { and, eq, gt } from "drizzle-orm";
 // NOTE: `brands`, `metaAds`, `agentMemory`, and `decisionJournal` are expected
 // to be added to the Drizzle schema by the parallel schema task with
 // Jarvis-standard camelCase names.
-import { brands, metaAds, agentMemory, decisionJournal } from "@/db/schema";
+import { brands, metaAds, agentMemory, decisionJournal, automationSettings } from "@/db/schema";
 import { v4 as uuid } from "uuid";
 import { log } from "@/lib/marketing/logger";
 import {
@@ -279,10 +279,32 @@ export async function runMonitorCycleForBrand(brandId: string): Promise<MonitorC
     duplicate: "duplicateEnabled",
   };
 
+  // Per-brand automation policy (auto-approve gating). Defaults are
+  // intentionally conservative when no row exists: only pause/kill auto-run,
+  // budget/duplicate require explicit opt-in. This sits AFTER the AI Guard
+  // verdict — Claude still scores everything, we just decide whether to
+  // honor "approved" or downgrade to pending for human review.
+  const automationRow = await db.query.automationSettings.findFirst({
+    where: eq(automationSettings.brandId, brandId),
+  });
+  const policy = (() => {
+    if (!automationRow) {
+      return { autoApproveMin: 0.85, autoApproveActions: new Set<string>(["pause", "kill"]) };
+    }
+    let parsed: string[] = ["pause", "kill"];
+    try {
+      parsed = JSON.parse(automationRow.autoApproveActions) as string[];
+    } catch {}
+    return {
+      autoApproveMin: automationRow.autoApproveMinConfidence,
+      autoApproveActions: new Set(parsed),
+    };
+  })();
+
   // Evaluate each recommendation and persist to decisionJournal
   for (const rec of recommendations) {
     try {
-      const verdict = await evaluateRecommendation(rec, config, memoryEntries);
+      const verdict = await evaluateRecommendation(rec, config, memoryEntries, brand.userId);
 
       const toggleKey = ACTION_TOGGLE[rec.action];
       const toggleOn = !!config.toggles[toggleKey];
@@ -295,6 +317,17 @@ export async function runMonitorCycleForBrand(brandId: string): Promise<MonitorC
         );
         verdict.verdict = "pending";
         verdict.reasoning = `${verdict.reasoning}\n\n[Auto-routed to approvals: the "${rec.action}" automation toggle is off, so this still needs a human to apply it.]`;
+      }
+
+      // Per-brand auto-approve allowlist + confidence floor.
+      if (verdict.verdict === "approved") {
+        if (!policy.autoApproveActions.has(rec.action)) {
+          verdict.verdict = "pending";
+          verdict.reasoning = `${verdict.reasoning}\n\n[Auto-routed to approvals: "${rec.action}" is not in this brand's auto-approve allowlist.]`;
+        } else if (verdict.confidence < policy.autoApproveMin) {
+          verdict.verdict = "pending";
+          verdict.reasoning = `${verdict.reasoning}\n\n[Auto-routed to approvals: confidence ${(verdict.confidence * 100).toFixed(0)}% is below the brand's auto-approve floor (${(policy.autoApproveMin * 100).toFixed(0)}%).]`;
+        }
       }
 
       if (verdict.verdict === "approved") result.approved++;

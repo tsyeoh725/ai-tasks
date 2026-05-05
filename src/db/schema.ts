@@ -872,6 +872,42 @@ export const appConfig = sqliteTable("app_config", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ---- Automation Settings (per-brand) ----
+// Controls the unattended pipeline: auto-pilot toggle, per-brand cadence,
+// and the threshold/action allowlist that gates auto-execution. When
+// `enabled` is false, the brand still gets approval entries but nothing
+// runs without a human. Defaults are intentionally conservative: only
+// pause/kill auto-execute, boost_budget/duplicate need explicit opt-in.
+export const automationSettings = sqliteTable("automation_settings", {
+  id: text("id").primaryKey(),
+  brandId: text("brand_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  cadenceHours: integer("cadence_hours").notNull().default(6),
+  autoApproveMinConfidence: real("auto_approve_min_confidence").notNull().default(0.85),
+  autoApproveActions: text("auto_approve_actions").notNull().default("[\"pause\",\"kill\"]"), // JSON array of RecommendationAction
+  lastCycleAt: integer("last_cycle_at", { mode: "timestamp" }),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+// ---- Cycle Runs ----
+// Per-step record of an automation cycle (sync, audit, etc). Powers the
+// pipeline view on /automation. Distinct from `sync_jobs` (which is the
+// generic background tracker) — cycle_runs link multiple steps under one
+// `cycleId` so the UI can render "this cycle ran sync ✓ + audit ✗".
+export const cycleRuns = sqliteTable("cycle_runs", {
+  id: text("id").primaryKey(),
+  cycleId: text("cycle_id").notNull(), // groups steps belonging to one cycle
+  brandId: text("brand_id").notNull().references(() => brands.id, { onDelete: "cascade" }),
+  step: text("step", { enum: ["sync", "audit", "execute"] }).notNull(),
+  status: text("status", { enum: ["queued", "running", "succeeded", "failed", "skipped"] }).notNull(),
+  trigger: text("trigger", { enum: ["scheduled", "manual"] }).notNull(),
+  result: text("result"), // JSON summary
+  error: text("error"),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  finishedAt: integer("finished_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ---- Sync Jobs ----
 // Background-job tracker. Long-running endpoints (Meta sync, monitor audit,
 // sheet sync) insert a row, return 202, then update status from a detached
@@ -1280,6 +1316,14 @@ export const globalSettingsRelations = relations(globalSettings, ({ one }) => ({
 
 export const syncJobsRelations = relations(syncJobs, ({ one }) => ({
   user: one(users, { fields: [syncJobs.userId], references: [users.id] }),
+}));
+
+export const automationSettingsRelations = relations(automationSettings, ({ one }) => ({
+  brand: one(brands, { fields: [automationSettings.brandId], references: [brands.id] }),
+}));
+
+export const cycleRunsRelations = relations(cycleRuns, ({ one }) => ({
+  brand: one(brands, { fields: [cycleRuns.brandId], references: [brands.id] }),
 }));
 
 export const projectStatusesRelations = relations(projectStatuses, ({ one, many }) => ({

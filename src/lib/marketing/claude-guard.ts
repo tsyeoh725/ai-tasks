@@ -2,6 +2,9 @@
 // Ported from jarvis/src/lib/services/claude-client.ts. Uses @anthropic-ai/sdk.
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicKey } from "@/lib/app-config";
+import { db } from "@/db";
+import { globalSettings } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 
 // --- Shared types (mirrored from Jarvis) ---
 
@@ -113,29 +116,20 @@ const GUARD_TOOL = {
   },
 };
 
-function buildGuardSystemPrompt(brandConfig: BrandConfig, memoryEntries: AgentMemoryEntry[]): string {
-  const memoryContext =
-    memoryEntries.length > 0
-      ? memoryEntries
-          .map((m) => {
-            const ts = m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt);
-            return `[${m.memoryType} - ${ts}]: ${m.content}`;
-          })
-          .join("\n")
-      : "No prior memory for this brand.";
-
-  return `You are Jarvis AI Guard — a quality assurance agent for automated Meta ad management.
+// Default system prompt template. Editable per-user via the /automation
+// page (stored in globalSettings under key=guard_system_prompt). The
+// {{...}} placeholders are substituted at render time so the user never
+// has to re-paste the dynamic brand context when tweaking instructions.
+export const DEFAULT_GUARD_SYSTEM_PROMPT = `You are Jarvis AI Guard — a quality assurance agent for automated Meta ad management.
 
 Your job is to validate or reject recommendations made by the Core Monitor agent. You must evaluate whether each recommendation is logically sound, data-backed, and safe to execute.
 
 ## Brand Configuration
-- CPL Maximum Threshold: ${brandConfig.thresholds.cplMax ?? "Not set"}
-- CTR Minimum Threshold: ${brandConfig.thresholds.ctrMin ?? "Not set"}
-- Frequency Maximum Threshold: ${brandConfig.thresholds.frequencyMax ?? "Not set"}
-- Automation Toggles: Kill=${brandConfig.toggles.killEnabled}, Budget=${brandConfig.toggles.budgetEnabled}, Duplicate=${brandConfig.toggles.duplicateEnabled}
+{{brand_thresholds}}
+{{toggles}}
 
 ## Brand Memory & Learning History
-${memoryContext}
+{{brand_memory}}
 
 ## Evaluation Criteria
 1. DATA SUFFICIENCY: If the ad has been running for less than 24 hours or has very low impressions (<100), reject or mark pending — insufficient data to make a decision.
@@ -153,6 +147,65 @@ ${memoryContext}
 - If logic is sound and risk is low/medium with high confidence: verdict can be "approved"
 
 Always use the validate_recommendation tool to return your verdict.`;
+
+export const GUARD_PROMPT_VARIABLES = [
+  { name: "{{brand_thresholds}}", description: "CPL/CTR/frequency thresholds set on the brand" },
+  { name: "{{toggles}}", description: "Which automation actions the brand has enabled" },
+  { name: "{{brand_memory}}", description: "Recent memory entries (operator remarks, weekly summaries)" },
+] as const;
+
+async function loadGuardPromptTemplate(brandUserId: string): Promise<string> {
+  // The prompt is per-user (the brand's owner), not global. Falls back to
+  // the default when no override exists or the saved value is empty.
+  try {
+    const row = await db.query.globalSettings.findFirst({
+      where: and(eq(globalSettings.userId, brandUserId), eq(globalSettings.key, "guard_system_prompt")),
+    });
+    if (!row) return DEFAULT_GUARD_SYSTEM_PROMPT;
+    const parsed = JSON.parse(row.value) as { template?: string } | string;
+    const template = typeof parsed === "string" ? parsed : parsed?.template;
+    return template && template.trim().length > 0 ? template : DEFAULT_GUARD_SYSTEM_PROMPT;
+  } catch {
+    return DEFAULT_GUARD_SYSTEM_PROMPT;
+  }
+}
+
+function renderGuardPrompt(
+  template: string,
+  brandConfig: BrandConfig,
+  memoryEntries: AgentMemoryEntry[],
+): string {
+  const memoryContext =
+    memoryEntries.length > 0
+      ? memoryEntries
+          .map((m) => {
+            const ts = m.createdAt instanceof Date ? m.createdAt.toISOString() : String(m.createdAt);
+            return `[${m.memoryType} - ${ts}]: ${m.content}`;
+          })
+          .join("\n")
+      : "No prior memory for this brand.";
+
+  const thresholds = [
+    `- CPL Maximum Threshold: ${brandConfig.thresholds.cplMax ?? "Not set"}`,
+    `- CTR Minimum Threshold: ${brandConfig.thresholds.ctrMin ?? "Not set"}`,
+    `- Frequency Maximum Threshold: ${brandConfig.thresholds.frequencyMax ?? "Not set"}`,
+  ].join("\n");
+
+  const toggles = `- Automation Toggles: Kill=${brandConfig.toggles.killEnabled}, Budget=${brandConfig.toggles.budgetEnabled}, Duplicate=${brandConfig.toggles.duplicateEnabled}`;
+
+  return template
+    .replaceAll("{{brand_thresholds}}", thresholds)
+    .replaceAll("{{toggles}}", toggles)
+    .replaceAll("{{brand_memory}}", memoryContext);
+}
+
+async function buildGuardSystemPrompt(
+  brandUserId: string,
+  brandConfig: BrandConfig,
+  memoryEntries: AgentMemoryEntry[],
+): Promise<string> {
+  const template = await loadGuardPromptTemplate(brandUserId);
+  return renderGuardPrompt(template, brandConfig, memoryEntries);
 }
 
 /**
@@ -162,6 +215,7 @@ export async function evaluateRecommendation(
   recommendation: Recommendation,
   brandConfig: BrandConfig,
   memoryEntries: AgentMemoryEntry[],
+  brandUserId: string,
 ): Promise<GuardVerdict> {
   const anthropic = await getClient();
 
@@ -187,7 +241,7 @@ Validate this recommendation using the tool.`;
   const response = await anthropic.messages.create({
     model: GUARD_MODEL,
     max_tokens: 1024,
-    system: buildGuardSystemPrompt(brandConfig, memoryEntries),
+    system: await buildGuardSystemPrompt(brandUserId, brandConfig, memoryEntries),
     tools: [GUARD_TOOL],
     tool_choice: { type: "tool", name: "validate_recommendation" },
     messages: [{ role: "user", content: userMessage }],

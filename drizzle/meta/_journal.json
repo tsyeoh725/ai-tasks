@@ -29,6 +29,13 @@
       "when": 1778048000000,
       "tag": "0003_add_sync_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1778050000000,
+      "tag": "0004_add_automation",
+      "breakpoints": true
     }
   ]
 }

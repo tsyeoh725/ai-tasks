@@ -170,6 +170,7 @@ const MARKETING_PATHS = [
   "/approvals",
   "/journal",
   "/memory",
+  "/automation",
   "/marketing",
 ];
 
@@ -591,6 +592,12 @@ function MarketingNav({
             active={pathname.startsWith("/memory")}
             label="AI Memory"
             icon={<Brain className="h-4 w-4" />}
+          />
+          <NavItem
+            href="/automation"
+            active={pathname.startsWith("/automation")}
+            label="Automation"
+            icon={<Zap className="h-4 w-4" />}
           />
         </nav>
       </CollapsibleSection>
