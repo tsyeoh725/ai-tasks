@@ -21,6 +21,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 type AdData = {
@@ -60,6 +67,12 @@ function getAdHealth(
   ad: AdData,
   t: BrandData["config"]["thresholds"],
 ): AdHealth {
+  // Without any thresholds we can't classify an ad — showing "HEALTHY" in
+  // that case is a lie. Surface "neutral" (NO DATA) so the user knows the
+  // brand still needs CPL/CTR/Frequency targets configured.
+  const hasThresholds = !!(t.cplMax || t.ctrMin || t.frequencyMax);
+  if (!hasThresholds) return "neutral";
+
   if (
     t.cplMax &&
     t.ctrMin &&
@@ -83,7 +96,9 @@ function getAdHealth(
   if (t.frequencyMax && ad.frequency !== null && ad.frequency > t.frequencyMax)
     b++;
   if (b > 0) return "warning";
-  if (ad.cpl === null && ad.ctr === null) return "neutral";
+  // Metrics for at least one threshold are missing → can't classify cleanly.
+  if (ad.cpl === null && ad.ctr === null && ad.frequency === null)
+    return "neutral";
   return "healthy";
 }
 
@@ -119,32 +134,99 @@ const HEALTH_STYLES: Record<
 };
 
 function daysAgo(n: number) {
+  // Use UTC math so server (UTC) and client (local TZ) compute the same
+  // ISO date string and SSR/hydration agree.
   const d = new Date();
-  d.setDate(d.getDate() - n);
+  d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().split("T")[0];
+}
+
+function todayISO() {
+  return new Date().toISOString().split("T")[0];
 }
 
 type SortKey = "spend" | "cpl" | "ctr" | "freq" | "name";
 type GroupKey = "none" | "brand" | "campaign" | "health";
 
+const FILTER_STORAGE_KEY = "ads:filters:v1";
+
 export default function AdsPage() {
-  const [selectedBrand, setSelectedBrand] = useState(() => {
-    if (typeof window === "undefined") return "all";
-    return new URLSearchParams(window.location.search).get("brand") ?? "all";
-  });
+  // Filter state is initialized with SSR-stable defaults — anything that
+  // depends on window/URL/Date.toISOString is hydrated in the effect below
+  // to avoid React hydration mismatches.
+  const [selectedBrand, setSelectedBrand] = useState("all");
   const [ads, setAds] = useState<AdData[]>([]);
   const [brands, setBrands] = useState<BrandData[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
-  const [dateFrom, setDateFrom] = useState(daysAgo(30));
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split("T")[0]);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [healthFilter, setHealthFilter] = useState<AdHealth | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [groupKey, setGroupKey] = useState<GroupKey>("none");
   const [syncingAll, setSyncingAll] = useState(false);
   const [auditing, setAuditing] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+  const [detailAd, setDetailAd] = useState<AdData | null>(null);
+
+  // Hydrate filter state from sessionStorage / URL after mount. Order:
+  // URL > sessionStorage > defaults. This both fixes the SSR mismatch
+  // (window/Date access in the initializer) and restores filters after
+  // the user navigates away and back during the same browser session.
+  useEffect(() => {
+    let brandFromUrl: string | null = null;
+    try {
+      brandFromUrl = new URLSearchParams(window.location.search).get("brand");
+    } catch {
+      // ignore
+    }
+
+    let saved: Partial<{
+      selectedBrand: string;
+      dateFrom: string;
+      dateTo: string;
+      healthFilter: AdHealth | "all";
+      sortKey: SortKey;
+      groupKey: GroupKey;
+    }> = {};
+    try {
+      const raw = window.sessionStorage.getItem(FILTER_STORAGE_KEY);
+      if (raw) saved = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+
+    setSelectedBrand(brandFromUrl ?? saved.selectedBrand ?? "all");
+    setDateFrom(saved.dateFrom ?? daysAgo(30));
+    setDateTo(saved.dateTo ?? todayISO());
+    if (saved.healthFilter) setHealthFilter(saved.healthFilter);
+    if (saved.sortKey) setSortKey(saved.sortKey);
+    if (saved.groupKey) setGroupKey(saved.groupKey);
+    setHydrated(true);
+  }, []);
+
+  // Persist filter changes back to sessionStorage so the user can navigate
+  // away and return without losing context.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.sessionStorage.setItem(
+        FILTER_STORAGE_KEY,
+        JSON.stringify({
+          selectedBrand,
+          dateFrom,
+          dateTo,
+          healthFilter,
+          sortKey,
+          groupKey,
+        }),
+      );
+    } catch {
+      // ignore
+    }
+  }, [hydrated, selectedBrand, dateFrom, dateTo, healthFilter, sortKey, groupKey]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -183,13 +265,16 @@ export default function AdsPage() {
   }, [selectedBrand, dateFrom, dateTo]);
 
   useEffect(() => {
+    // Wait for hydration so the empty-string defaults don't cause a wasted
+    // first request with startDate="".
+    if (!hydrated) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount/dep change; not migrating to Suspense
     fetchData();
-  }, [fetchData]);
+  }, [fetchData, hydrated]);
 
   function setDatePreset(days: number) {
     setDateFrom(daysAgo(days));
-    setDateTo(new Date().toISOString().split("T")[0]);
+    setDateTo(todayISO());
   }
 
   async function handleSyncAll() {
@@ -628,7 +713,8 @@ export default function AdsPage() {
                           return (
                             <tr
                               key={ad.id}
-                              className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                              onClick={() => setDetailAd(ad)}
+                              className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
                             >
                               <td className="px-4 py-2.5">
                                 <div
@@ -697,7 +783,10 @@ export default function AdsPage() {
                               <td className="text-right px-3 py-2.5 font-mono tabular-nums text-gray-800">
                                 {ad.leads}
                               </td>
-                              <td className="text-right px-3 py-2.5">
+                              <td
+                                className="text-right px-3 py-2.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
                                 {ad.status === "ACTIVE" ? (
                                   <Button
                                     size="xs"
@@ -744,6 +833,145 @@ export default function AdsPage() {
           })}
         </div>
       )}
+
+      <AdDetailDialog
+        ad={detailAd}
+        onClose={() => setDetailAd(null)}
+        thresholds={detailAd ? getThresholds(detailAd.brandId) : null}
+        costLabel={detailAd ? getCostLabel(detailAd.brandId) : "CPL"}
+        health={
+          detailAd
+            ? getAdHealth(detailAd, getThresholds(detailAd.brandId))
+            : null
+        }
+      />
+    </div>
+  );
+}
+
+function AdDetailDialog({
+  ad,
+  onClose,
+  thresholds,
+  costLabel,
+  health,
+}: {
+  ad: AdData | null;
+  onClose: () => void;
+  thresholds: BrandData["config"]["thresholds"] | null;
+  costLabel: string;
+  health: AdHealth | null;
+}) {
+  const open = ad !== null;
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="truncate">{ad?.name ?? ""}</DialogTitle>
+          <DialogDescription>
+            {ad?.brandName && <span>{ad.brandName} &middot; </span>}
+            {ad?.campaignName || "—"}
+            {ad?.adSetName && (
+              <>
+                {" "}
+                &middot; <span className="text-gray-500">{ad.adSetName}</span>
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {ad && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge variant={ad.status === "ACTIVE" ? "success" : "secondary"}>
+                {ad.status}
+              </Badge>
+              {health && (
+                <Badge variant={HEALTH_STYLES[health].badgeVariant}>
+                  {HEALTH_STYLES[health].label}
+                </Badge>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <DetailStat label="Spend" value={`RM${ad.spend.toFixed(2)}`} />
+              <DetailStat label="Leads" value={ad.leads.toLocaleString()} />
+              <DetailStat
+                label={costLabel}
+                value={ad.cpl !== null ? `RM${ad.cpl.toFixed(2)}` : "—"}
+                hint={
+                  thresholds?.cplMax
+                    ? `target ≤ RM${thresholds.cplMax.toFixed(2)}`
+                    : undefined
+                }
+              />
+              <DetailStat
+                label="Impressions"
+                value={ad.impressions.toLocaleString()}
+              />
+              <DetailStat
+                label="Clicks"
+                value={ad.clicks.toLocaleString()}
+              />
+              <DetailStat
+                label="CTR"
+                value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
+                hint={
+                  thresholds?.ctrMin
+                    ? `target ≥ ${thresholds.ctrMin.toFixed(2)}%`
+                    : ad.impressions < 100
+                      ? "needs ≥100 impressions"
+                      : undefined
+                }
+              />
+              <DetailStat
+                label="Frequency"
+                value={ad.frequency !== null ? ad.frequency.toFixed(2) : "—"}
+                hint={
+                  thresholds?.frequencyMax
+                    ? `target ≤ ${thresholds.frequencyMax.toFixed(2)}`
+                    : undefined
+                }
+              />
+            </div>
+
+            {ad.metaAdId && (
+              <div className="pt-2 border-t border-gray-200">
+                <a
+                  href={`https://www.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaAdId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-indigo-600 hover:underline"
+                >
+                  Open in Meta Ads Manager &rarr;
+                </a>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailStat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
+        {label}
+      </p>
+      <p className="text-base font-semibold text-gray-900 mt-0.5 tabular-nums">
+        {value}
+      </p>
+      {hint && <p className="text-[10px] text-gray-400 mt-0.5">{hint}</p>}
     </div>
   );
 }

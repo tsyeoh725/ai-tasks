@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { useState, useEffect } from "react";
 import { useSidebar } from "@/components/sidebar-context";
@@ -114,13 +114,19 @@ function CollapsibleSection({
   defaultOpen?: boolean;
 }) {
   const storageKey = `sidebar:section:${label}`;
-  const [open, setOpen] = useState<boolean>(() => {
-    if (typeof window === "undefined") return defaultOpen;
-    const saved = window.localStorage.getItem(`sidebar:section:${label}`);
-    if (saved === "0") return false;
-    if (saved === "1") return true;
-    return defaultOpen;
-  });
+  // Render with defaultOpen on first paint so SSR and the first client render
+  // agree; hydrate the persisted localStorage choice in an effect afterwards.
+  const [open, setOpen] = useState<boolean>(defaultOpen);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved === "0") setOpen(false);
+      else if (saved === "1") setOpen(true);
+    } catch {
+      // ignore
+    }
+  }, [storageKey]);
 
   function toggle() {
     setOpen((prev) => {
@@ -173,6 +179,7 @@ function pickModeFromPath(pathname: string): Mode {
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const { data: session } = useSession();
   const [projects, setProjects] = useState<Project[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -268,11 +275,16 @@ export function Sidebar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Module toggle */}
+        {/* Module toggle — clicking a tab navigates to that side's landing
+            page so the user always lands on a meaningful overview instead of
+            keeping the previous URL with a mismatched nav. */}
         <div className="flex items-center rounded-lg bg-slate-100 dark:bg-white/5 border border-slate-200 dark:border-white/10 p-0.5">
           <button
             type="button"
-            onClick={() => setMode("work")}
+            onClick={() => {
+              setMode("work");
+              if (mode !== "work") router.push("/");
+            }}
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all",
               mode === "work"
@@ -285,7 +297,10 @@ export function Sidebar() {
           </button>
           <button
             type="button"
-            onClick={() => setMode("marketing")}
+            onClick={() => {
+              setMode("marketing");
+              if (mode !== "marketing") router.push("/marketing");
+            }}
             className={cn(
               "flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-medium transition-all relative",
               mode === "marketing"
@@ -530,6 +545,12 @@ function MarketingNav({
   return (
     <div className="px-1">
       <nav className="space-y-0.5">
+        <NavItem
+          href="/marketing"
+          active={pathname === "/marketing"}
+          label="Overview"
+          icon={<LayoutDashboard className="h-4 w-4" />}
+        />
         <NavItem
           href="/brands"
           active={pathname.startsWith("/brands")}

@@ -37,15 +37,30 @@ type Ctx = {
 
 const WorkspaceContext = createContext<Ctx | null>(null);
 
-export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const [workspace, setWorkspaceState] = useState<Workspace>(() => {
-    if (typeof window === "undefined") return { kind: "personal" };
-    // Cookie wins on first paint so it matches what the server saw on SSR.
+export function WorkspaceProvider({
+  children,
+  initialWorkspace,
+}: {
+  children: React.ReactNode;
+  initialWorkspace?: Workspace;
+}) {
+  // Initialize with what the server saw (cookie pre-read in the layout) so
+  // SSR and first client render agree. Without an initial prop we fall back
+  // to "personal" and reconcile with the cookie/localStorage in an effect.
+  const [workspace, setWorkspaceState] = useState<Workspace>(
+    initialWorkspace ?? { kind: "personal" },
+  );
+
+  useEffect(() => {
+    if (initialWorkspace) return;
     const fromCookie = readCookie();
-    if (fromCookie) return fromString(fromCookie);
+    if (fromCookie) {
+      setWorkspaceState(fromString(fromCookie));
+      return;
+    }
     const fromStorage = window.localStorage.getItem(STORAGE_KEY);
-    return fromString(fromStorage);
-  });
+    if (fromStorage) setWorkspaceState(fromString(fromStorage));
+  }, [initialWorkspace]);
 
   // Mirror to localStorage so multiple tabs see the same value.
   useEffect(() => {

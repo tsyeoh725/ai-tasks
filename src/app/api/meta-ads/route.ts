@@ -173,8 +173,29 @@ export async function GET(req: Request) {
       const leads = dateFilterActive ? agg?.leads ?? 0 : agg?.leads ?? ad.leads ?? 0;
       const days = agg?.days ?? 0;
 
-      const cpl = leads > 0 ? spend / leads : dateFilterActive ? null : ad.cpl ?? null;
-      const ctr = impressions > 0 ? (clicks / impressions) * 100 : dateFilterActive ? null : ad.ctr ?? null;
+      // CPL only makes sense when there is real spend AND at least one lead.
+      // Showing "RM0.00 CPL" for ads where Meta retroactively attributed
+      // leads but billed nothing in the period is misleading — surface "—"
+      // instead so the contradiction (e.g. 8 leads / RM0 spend) is clear.
+      const cpl =
+        leads > 0 && spend > 0
+          ? spend / leads
+          : dateFilterActive
+            ? null
+            : ad.cpl ?? null;
+
+      // CTR is unreliable below a minimum impression count: 1 impression / 1
+      // click reads as 100% which is meaningless. Require at least
+      // MIN_IMPRESSIONS_FOR_CTR before reporting a percentage; below that,
+      // surface "—" so it is obvious there isn't enough data yet.
+      const MIN_IMPRESSIONS_FOR_CTR = 100;
+      const ctr =
+        impressions >= MIN_IMPRESSIONS_FOR_CTR
+          ? (clicks / impressions) * 100
+          : dateFilterActive
+            ? null
+            : ad.ctr ?? null;
+
       const frequency = days > 0 ? (agg?.freqSum ?? 0) / days : dateFilterActive ? null : ad.frequency ?? null;
 
       const healthScore = computeHealth(cpl, ctr, frequency, ad.brandId);
