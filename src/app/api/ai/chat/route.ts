@@ -104,7 +104,12 @@ Current task context:
   systemPrompt += `\n\nBe concise, helpful, and actionable. If the user asks you to break down the task, suggest specific subtasks. If they ask for advice, give practical recommendations.`;
 
   try {
-    const result = await streamAiResponse(systemPrompt, message);
+    let captured: unknown = null;
+    const result = await streamAiResponse(systemPrompt, message, {
+      onError: (e) => {
+        captured = e;
+      },
+    });
 
     // Create a streaming response
     const encoder = new TextEncoder();
@@ -118,6 +123,17 @@ Current task context:
             controller.enqueue(encoder.encode(chunk));
           }
 
+          if (fullResponse.length === 0) {
+            const msg = captured
+              ? captured instanceof Error
+                ? captured.message
+                : String(captured)
+              : "AI returned an empty response. Check Settings → AI for a valid key/model.";
+            controller.enqueue(encoder.encode(`⚠️ ${msg}`));
+            controller.close();
+            return;
+          }
+
           // Save AI response after stream completes
           await db.insert(taskComments).values({
             id: uuid(),
@@ -129,13 +145,19 @@ Current task context:
 
           controller.close();
         } catch (err) {
-          controller.error(err);
+          const msg = err instanceof Error ? err.message : "Stream error";
+          controller.enqueue(encoder.encode(`⚠️ ${msg}`));
+          controller.close();
         }
       },
     });
 
     return new Response(stream, {
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+      },
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : "AI service error";

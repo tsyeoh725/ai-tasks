@@ -32,13 +32,26 @@ export async function isAiConfigured(): Promise<boolean> {
   return !!(anthropicKey || openaiKey);
 }
 
-export async function streamAiResponse(systemPrompt: string, userMessage: string) {
+// In AI SDK v6 streamText errors are NOT thrown when iterating textStream —
+// they are routed to onError. Without a handler, a bad key / deprecated model /
+// network failure produces a silently-empty stream and the caller sees nothing.
+// Callers pass `onError` so they can surface the failure (e.g. into the HTTP
+// response) instead of returning an empty 200.
+export async function streamAiResponse(
+  systemPrompt: string,
+  userMessage: string,
+  options: { onError?: (error: unknown) => void } = {},
+) {
   const model = await getModel();
 
   const result = streamText({
     model,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
+    onError: ({ error }) => {
+      console.error("[ai] streamText error:", error);
+      options.onError?.(error);
+    },
   });
 
   return result;
@@ -46,16 +59,24 @@ export async function streamAiResponse(systemPrompt: string, userMessage: string
 
 export async function generateAiResponse(systemPrompt: string, userMessage: string): Promise<string> {
   const model = await getModel();
+  let captured: unknown = null;
 
   const result = streamText({
     model,
     system: systemPrompt,
     messages: [{ role: "user", content: userMessage }],
+    onError: ({ error }) => {
+      captured = error;
+      console.error("[ai] streamText error:", error);
+    },
   });
 
   let text = "";
   for await (const chunk of result.textStream) {
     text += chunk;
+  }
+  if (!text && captured) {
+    throw captured instanceof Error ? captured : new Error(String(captured));
   }
   return text;
 }

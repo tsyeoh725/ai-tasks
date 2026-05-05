@@ -157,9 +157,18 @@ export async function GET() {
     "Give a 3-4 sentence briefing of my current workload. Lead with the single most urgent thing. Then give 2 concrete recommendations for what to tackle first. Be direct.";
 
   try {
-    const result = await streamAiResponse(systemPrompt, prompt);
+    let captured: unknown = null;
+    const result = await streamAiResponse(systemPrompt, prompt, {
+      onError: (e) => {
+        captured = e;
+      },
+    });
     let text = "";
     for await (const chunk of result.textStream) text += chunk;
+    if (!text && captured) {
+      const msg = captured instanceof Error ? captured.message : String(captured);
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
     return NextResponse.json({
       briefing: text,
       stats: {
@@ -197,24 +206,51 @@ export async function POST(req: Request) {
   const systemPrompt = buildSystemPrompt(ctx, user.name || "there");
 
   try {
-    const result = await streamAiResponse(systemPrompt, message);
+    let captured: unknown = null;
+    const result = await streamAiResponse(systemPrompt, message, {
+      onError: (e) => {
+        captured = e;
+      },
+    });
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
+        let chunkCount = 0;
         try {
           for await (const chunk of result.textStream) {
             controller.enqueue(encoder.encode(chunk));
+            chunkCount++;
+          }
+          // streamText in v6 routes API errors to onError instead of throwing.
+          // If no chunks landed, surface the captured error as text so the
+          // user sees something concrete instead of a blank reply.
+          if (chunkCount === 0) {
+            const msg = captured
+              ? captured instanceof Error
+                ? captured.message
+                : String(captured)
+              : "AI returned an empty response. Check Settings → AI for a valid key/model.";
+            controller.enqueue(encoder.encode(`⚠️ ${msg}`));
           }
           controller.close();
         } catch (err) {
-          controller.error(err);
+          const msg = err instanceof Error ? err.message : "Stream error";
+          controller.enqueue(encoder.encode(`⚠️ ${msg}`));
+          controller.close();
         }
       },
     });
 
+    // X-Accel-Buffering disables proxy buffering (Caddy/nginx) so chunks reach
+    // the client as they're produced. Without it, short streams can get held
+    // until they complete or the upstream times out.
     return new Response(stream, {
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        "X-Accel-Buffering": "no",
+      },
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "AI error";
