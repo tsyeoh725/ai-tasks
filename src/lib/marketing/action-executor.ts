@@ -287,6 +287,8 @@ export async function executeJournalEntry(
     ? (JSON.parse(entryRow.kpiValues) as Recommendation["kpiValues"])
     : { cpl: null, ctr: null, frequency: null, spend: 0 };
 
+  // The executor runs AFTER the guard, so maturity / recentActions are not
+  // re-read here — empty defaults satisfy the type without any behavior change.
   const recommendation: Recommendation = {
     brandId: entryRow.brandId,
     brandName: brand.name,
@@ -297,6 +299,8 @@ export async function executeJournalEntry(
     reason: entryRow.reason,
     kpiValues,
     thresholds: config.thresholds,
+    maturity: { runtimeHours: null, impressions: 0, clicks: 0 },
+    recentActions: [],
   };
 
   if (entryRow.adId) {

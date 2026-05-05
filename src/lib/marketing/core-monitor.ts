@@ -3,7 +3,7 @@
 // thresholds, generates Recommendations, passes each through AI Guard, and
 // records verdicts in the decisionJournal.
 import { db } from "@/db";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 // NOTE: `brands`, `metaAds`, `agentMemory`, and `decisionJournal` are expected
 // to be added to the Drizzle schema by the parallel schema task with
 // Jarvis-standard camelCase names.
@@ -15,6 +15,7 @@ import {
   type BrandConfig,
   type BrandThresholds,
   type Recommendation,
+  type RecentAction,
   type GuardVerdict,
 } from "@/lib/marketing/claude-guard";
 
@@ -52,6 +53,7 @@ interface AdWithContext {
   clicks: number;
   leads: number;
   syncedAt: Date | null;
+  createdAt: Date | null; // when this ad row was first inserted (proxy for runtime)
 }
 
 function evaluateAd(
@@ -67,6 +69,19 @@ function evaluateAd(
     frequency: ad.frequency,
     spend: ad.spend,
   };
+  // Hours since this ad row was first inserted. Lower bound on actual ad
+  // runtime — Meta may have started the ad earlier than our first sync.
+  const runtimeHours = ad.createdAt
+    ? (Date.now() - ad.createdAt.getTime()) / (1000 * 60 * 60)
+    : null;
+  const maturity = {
+    runtimeHours,
+    impressions: ad.impressions,
+    clicks: ad.clicks,
+  };
+  // recentActions starts empty here; runMonitorCycleForBrand fills it after
+  // a single batched query across all candidate ads.
+  const recentActions: RecentAction[] = [];
 
   // Winner: CPL < 50% of max AND CTR > 2x min
   if (thresholds.cplMax !== null && thresholds.ctrMin !== null) {
@@ -86,6 +101,8 @@ function evaluateAd(
         reason: `Winner detected — CPL (RM ${ad.cpl.toFixed(2)}) is less than 50% of threshold (RM ${thresholds.cplMax}) and CTR (${ad.ctr.toFixed(2)}%) is more than 2x threshold (${thresholds.ctrMin}%). Boosting budget instead of duplicating (Meta app in dev mode).`,
         kpiValues,
         thresholds,
+        maturity,
+        recentActions,
       };
     }
   }
@@ -106,6 +123,8 @@ function evaluateAd(
         reason: `CPL (RM ${ad.cpl.toFixed(2)}) exceeds threshold (RM ${thresholds.cplMax}) AND CTR (${ad.ctr.toFixed(2)}%) below threshold (${thresholds.ctrMin}%)${suffix}`,
         kpiValues,
         thresholds,
+        maturity,
+        recentActions,
       };
     }
   }
@@ -123,6 +142,8 @@ function evaluateAd(
         reason: `CPL (RM ${ad.cpl.toFixed(2)}) exceeds threshold (RM ${thresholds.cplMax}) — possible targeting issue (CTR is acceptable)`,
         kpiValues,
         thresholds,
+        maturity,
+        recentActions,
       };
     }
   }
@@ -140,6 +161,8 @@ function evaluateAd(
         reason: `Frequency (${ad.frequency.toFixed(2)}) exceeds threshold (${thresholds.frequencyMax}) — audience fatigue detected`,
         kpiValues,
         thresholds,
+        maturity,
+        recentActions,
       };
     }
   }
@@ -262,6 +285,47 @@ export async function runMonitorCycleForBrand(brandId: string): Promise<MonitorC
     content: m.content as string,
     createdAt: m.createdAt as Date,
   }));
+
+  // Batch-load recent decision journal rows for every candidate ad so the
+  // AI Guard can enforce its 72-hour cooldown rule. One query covers all
+  // ads in this cycle to keep the loop cheap. Capped at 5 entries per ad.
+  const candidateAdIds = recommendations
+    .map((r) => r.adId)
+    .filter((id): id is string => Boolean(id));
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const recentJournalRows =
+    candidateAdIds.length > 0
+      ? await db.query.decisionJournal.findMany({
+          where: and(
+            inArray(decisionJournal.adId, candidateAdIds),
+            gt(decisionJournal.createdAt, sevenDaysAgo),
+          ),
+          orderBy: (j, { desc }) => [desc(j.createdAt)],
+          columns: {
+            adId: true,
+            recommendation: true,
+            guardVerdict: true,
+            actionTaken: true,
+            createdAt: true,
+          },
+        })
+      : [];
+  const recentByAd = new Map<string, RecentAction[]>();
+  for (const row of recentJournalRows) {
+    if (!row.adId) continue;
+    const list = recentByAd.get(row.adId) ?? [];
+    if (list.length >= 5) continue;
+    list.push({
+      action: row.recommendation,
+      verdict: row.guardVerdict,
+      actionTaken: !!row.actionTaken,
+      createdAt: row.createdAt as Date,
+    });
+    recentByAd.set(row.adId, list);
+  }
+  for (const rec of recommendations) {
+    if (rec.adId) rec.recentActions = recentByAd.get(rec.adId) ?? [];
+  }
 
   // Map each action to the brand toggle that gates auto-execution. Mirrors
   // the same mapping inside action-executor so the gating story stays

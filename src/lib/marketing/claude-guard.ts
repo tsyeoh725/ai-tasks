@@ -36,6 +36,22 @@ export interface BrandConfig {
 
 export type RecommendationAction = "kill" | "pause" | "boost_budget" | "duplicate";
 
+export interface RecentAction {
+  action: string;
+  verdict: string;
+  actionTaken: boolean;
+  createdAt: Date | string;
+}
+
+export interface AdMaturity {
+  // Hours since the ad was first seen in our DB. This is a lower bound for
+  // ad runtime — Meta might have started it earlier and we only synced it
+  // now, but it's the closest signal we have without a separate Meta call.
+  runtimeHours: number | null;
+  impressions: number;
+  clicks: number;
+}
+
 export interface Recommendation {
   brandId: string;
   brandName: string;
@@ -51,6 +67,11 @@ export interface Recommendation {
     spend: number;
   };
   thresholds: BrandThresholds;
+  // Data-sufficiency / cooldown signals the AI Guard prompt depends on.
+  // Populated by core-monitor; the prompt's hard gates (runtime ≥ 24h,
+  // impressions ≥ 100, 72h cooldown) cannot pass without them.
+  maturity: AdMaturity;
+  recentActions: RecentAction[];
 }
 
 export type VerdictType = "approved" | "rejected" | "pending";
@@ -272,6 +293,24 @@ export async function evaluateRecommendation(
   // message so the editable system prompt can stay placeholder-free.
   const brandContext = formatBrandContext(brandConfig, memoryEntries);
 
+  const runtimeStr =
+    recommendation.maturity.runtimeHours !== null
+      ? recommendation.maturity.runtimeHours >= 48
+        ? `${(recommendation.maturity.runtimeHours / 24).toFixed(1)} days (${recommendation.maturity.runtimeHours.toFixed(0)}h)`
+        : `${recommendation.maturity.runtimeHours.toFixed(1)}h`
+      : "Unknown";
+
+  const recentActionsStr =
+    recommendation.recentActions.length === 0
+      ? "- none in the last 7 days"
+      : recommendation.recentActions
+          .map((a) => {
+            const ts = a.createdAt instanceof Date ? a.createdAt.toISOString() : String(a.createdAt);
+            const exec = a.actionTaken ? "executed" : "not executed";
+            return `- ${ts} — ${a.action.toUpperCase()} → ${a.verdict} (${exec})`;
+          })
+          .join("\n");
+
   const userMessage = `Evaluate this ad management recommendation:
 
 **Action:** ${recommendation.action.toUpperCase()}
@@ -283,6 +322,14 @@ export async function evaluateRecommendation(
 - CTR: ${recommendation.kpiValues.ctr !== null ? `${recommendation.kpiValues.ctr.toFixed(2)}%` : "N/A"}
 - Frequency: ${recommendation.kpiValues.frequency !== null ? recommendation.kpiValues.frequency.toFixed(2) : "N/A"}
 - Total Spend: RM ${recommendation.kpiValues.spend.toFixed(2)}
+
+**Ad Maturity (data sufficiency signals):**
+- Runtime (since first synced): ${runtimeStr}
+- Impressions: ${recommendation.maturity.impressions.toLocaleString()}
+- Clicks: ${recommendation.maturity.clicks.toLocaleString()}
+
+**Recent actions on this ad (last 7 days, newest first):**
+${recentActionsStr}
 
 ${brandContext}
 
