@@ -123,6 +123,7 @@ async function executeKillOrPause(
 async function executeBoostBudget(
   recommendation: Recommendation,
   accessToken: string,
+  overrideBudget: number | null = null,
 ): Promise<ActionResult> {
   if (!recommendation.adSetId) {
     return { success: false, action: "boost_budget", error: "No adSetId provided" };
@@ -154,14 +155,24 @@ async function executeBoostBudget(
   const campaignDailyBudget = campaign?.dailyBudget ?? null;
   const campaignLifetimeBudget = campaign?.lifetimeBudget ?? null;
 
+  // Operator-typed amount on the approval card overrides the default *1.5
+  // projection. null/0/negative falls back to the auto bump so a malformed
+  // override can't accidentally zero out a budget.
+  const useOverride = overrideBudget !== null && overrideBudget > 0;
+  const project = (current: number) =>
+    useOverride
+      ? Math.round(overrideBudget * 100) / 100
+      : Math.round(current * 1.5 * 100) / 100;
+
   log("info", "action_executor", `Budget check for "${recommendation.adName}"`, {
     adsetBudget: adSetBudget,
     campaignDailyBudget,
     campaignLifetimeBudget,
+    overrideBudget,
   });
 
   if (adSetBudget !== null && adSetBudget > 0) {
-    const newBudget = Math.round(adSetBudget * 1.5 * 100) / 100;
+    const newBudget = project(adSetBudget);
     const beforeState = { dailyBudget: adSetBudget, level: "ad_set" };
     await metaApi.updateAdSetBudget(adSetRow.metaAdsetId, newBudget, accessToken);
     await db.update(metaAdSets).set({ dailyBudget: newBudget }).where(eq(metaAdSets.id, recommendation.adSetId));
@@ -170,12 +181,12 @@ async function executeBoostBudget(
       action: "boost_budget",
       metaAdSetId: adSetRow.metaAdsetId,
       beforeState,
-      afterState: { dailyBudget: newBudget, level: "ad_set" },
+      afterState: { dailyBudget: newBudget, level: "ad_set", override: useOverride },
     };
   }
 
   if (campaign && campaignDailyBudget !== null && campaignDailyBudget > 0) {
-    const newBudget = Math.round(campaignDailyBudget * 1.5 * 100) / 100;
+    const newBudget = project(campaignDailyBudget);
     const beforeState = { dailyBudget: campaignDailyBudget, level: "campaign" };
     await metaApi.updateCampaignBudget(campaign.metaCampaignId, newBudget, "daily", accessToken);
     await db.update(metaCampaigns).set({ dailyBudget: newBudget }).where(eq(metaCampaigns.id, campaign.id));
@@ -184,12 +195,12 @@ async function executeBoostBudget(
       action: "boost_budget",
       metaCampaignId: campaign.metaCampaignId,
       beforeState,
-      afterState: { dailyBudget: newBudget, level: "campaign" },
+      afterState: { dailyBudget: newBudget, level: "campaign", override: useOverride },
     };
   }
 
   if (campaign && campaignLifetimeBudget !== null && campaignLifetimeBudget > 0) {
-    const newBudget = Math.round(campaignLifetimeBudget * 1.5 * 100) / 100;
+    const newBudget = project(campaignLifetimeBudget);
     const beforeState = { lifetimeBudget: campaignLifetimeBudget, level: "campaign" };
     await metaApi.updateCampaignBudget(campaign.metaCampaignId, newBudget, "lifetime", accessToken);
     await db.update(metaCampaigns).set({ lifetimeBudget: newBudget }).where(eq(metaCampaigns.id, campaign.id));
@@ -198,7 +209,7 @@ async function executeBoostBudget(
       action: "boost_budget",
       metaCampaignId: campaign.metaCampaignId,
       beforeState,
-      afterState: { lifetimeBudget: newBudget, level: "campaign" },
+      afterState: { lifetimeBudget: newBudget, level: "campaign", override: useOverride },
     };
   }
 
@@ -258,6 +269,7 @@ export async function executeJournalEntry(
     reason: string;
     kpiValues: string | null;
     guardVerdict: string;
+    userOverrideBudget: number | null;
   };
 
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, entryRow.brandId) });
@@ -287,7 +299,13 @@ export async function executeJournalEntry(
     if (ad) recommendation.adName = (ad as unknown as { name: string }).name;
   }
 
-  return executeRecommendation(recommendation, config, journalId, options.manualApproval ?? false);
+  return executeRecommendation(
+    recommendation,
+    config,
+    journalId,
+    options.manualApproval ?? false,
+    entryRow.userOverrideBudget,
+  );
 }
 
 /**
@@ -299,6 +317,7 @@ export async function executeRecommendation(
   brandConfig: BrandConfig,
   journalId: string,
   manualApproval = false,
+  overrideBudget: number | null = null,
 ): Promise<ActionResult> {
   log(
     "info",
@@ -401,7 +420,7 @@ export async function executeRecommendation(
         result = await executeKillOrPause(recommendation, accessToken);
         break;
       case "boost_budget":
-        result = await executeBoostBudget(recommendation, accessToken);
+        result = await executeBoostBudget(recommendation, accessToken, overrideBudget);
         break;
       case "duplicate":
         result = await executeDuplicate(recommendation, accessToken);

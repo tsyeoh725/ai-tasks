@@ -138,6 +138,11 @@ export default function ApprovalsPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<string | null>(null);
+  // Per-row editable state. budgetInputs is the string the user is typing
+  // (string so partial entries like "" or "1." don't fight the input);
+  // remarks is the textarea content. Keyed by entry id.
+  const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>({});
+  const [remarks, setRemarks] = useState<Record<string, string>>({});
 
   const fetchPending = useCallback(async () => {
     setLoading(true);
@@ -152,12 +157,13 @@ export default function ApprovalsPage() {
         // names, which is why every card said "Unknown ad" / "Brand: —".
         list.map((e: Record<string, unknown>) => {
           const row = e as unknown as Entry;
+          const budgetInfo =
+            row.recommendation === "boost_budget" ? computeBudgetInfo(e) : undefined;
           return {
             ...row,
             brandName: (e.brand as { name?: string } | null)?.name,
             adName: (e.ad as { name?: string } | null)?.name,
-            budgetInfo:
-              row.recommendation === "boost_budget" ? computeBudgetInfo(e) : undefined,
+            budgetInfo,
           };
         }),
       );
@@ -166,6 +172,26 @@ export default function ApprovalsPage() {
     }
     setLoading(false);
   }, []);
+
+  // Seed the per-row inputs with sensible defaults whenever the entry list
+  // changes: boost_budget rows pre-fill the +50% projection, others stay
+  // empty. Existing user-typed values are preserved.
+  useEffect(() => {
+    setBudgetInputs((prev) => {
+      const next = { ...prev };
+      for (const entry of entries) {
+        if (
+          entry.recommendation === "boost_budget" &&
+          next[entry.id] === undefined &&
+          entry.budgetInfo?.projected !== null &&
+          entry.budgetInfo?.projected !== undefined
+        ) {
+          next[entry.id] = entry.budgetInfo.projected.toFixed(2);
+        }
+      }
+      return next;
+    });
+  }, [entries]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount/dep change; not migrating to Suspense
@@ -176,16 +202,39 @@ export default function ApprovalsPage() {
     setProcessing((prev) => new Set(prev).add(id));
     setStatus(null);
     try {
+      const entry = entries.find((e) => e.id === id);
+      const remark = remarks[id]?.trim() || undefined;
+      // Only send overrideBudget for boost_budget approvals, and only when
+      // it parses to a positive finite number. Empty / unchanged input is
+      // sent as undefined so the executor falls back to its default *1.5.
+      let overrideBudget: number | undefined;
+      if (verdict === "approved" && entry?.recommendation === "boost_budget") {
+        const raw = budgetInputs[id];
+        const parsed = raw !== undefined && raw !== "" ? Number(raw) : NaN;
+        if (Number.isFinite(parsed) && parsed > 0) {
+          overrideBudget = parsed;
+        }
+      }
       const res = await fetch(`/api/approvals/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verdict }),
+        body: JSON.stringify({ verdict, userRemark: remark, overrideBudget }),
       });
       if (res.ok) {
         setEntries((prev) => prev.filter((e) => e.id !== id));
         setSelected((prev) => {
           const next = new Set(prev);
           next.delete(id);
+          return next;
+        });
+        setBudgetInputs((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setRemarks((prev) => {
+          const next = { ...prev };
+          delete next[id];
           return next;
         });
         setStatus(verdict === "approved" ? "Approved & executed" : "Rejected");
@@ -415,6 +464,61 @@ export default function ApprovalsPage() {
                       )}
                     </div>
                   )}
+
+                  {entry.recommendation === "boost_budget" &&
+                    entry.budgetInfo &&
+                    entry.budgetInfo.level !== "none" && (
+                      <div>
+                        <label
+                          htmlFor={`budget-${entry.id}`}
+                          className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
+                        >
+                          New budget (RM)
+                        </label>
+                        <input
+                          id={`budget-${entry.id}`}
+                          type="number"
+                          inputMode="decimal"
+                          step="0.01"
+                          min="0"
+                          value={budgetInputs[entry.id] ?? ""}
+                          onChange={(ev) =>
+                            setBudgetInputs((prev) => ({
+                              ...prev,
+                              [entry.id]: ev.target.value,
+                            }))
+                          }
+                          disabled={isProcessing}
+                          className="w-32 rounded-md border border-gray-300 px-2 py-1 text-xs font-mono"
+                        />
+                        <span className="ml-2 text-[10px] text-gray-500">
+                          default {fmtRM(entry.budgetInfo.projected ?? 0)} (current ×1.5)
+                        </span>
+                      </div>
+                    )}
+
+                  <div>
+                    <label
+                      htmlFor={`remark-${entry.id}`}
+                      className="block text-[10px] uppercase tracking-wider text-gray-500 mb-1"
+                    >
+                      Remark for AI (optional)
+                    </label>
+                    <textarea
+                      id={`remark-${entry.id}`}
+                      rows={2}
+                      placeholder="e.g. Don't boost above RM200 for this brand"
+                      value={remarks[entry.id] ?? ""}
+                      onChange={(ev) =>
+                        setRemarks((prev) => ({ ...prev, [entry.id]: ev.target.value }))
+                      }
+                      disabled={isProcessing}
+                      className="w-full rounded-md border border-gray-300 px-2 py-1 text-xs"
+                    />
+                    <p className="mt-1 text-[10px] text-gray-400">
+                      Saved as brand memory — the AI Guard reads recent remarks on future cycles.
+                    </p>
+                  </div>
 
                   <div className="flex gap-2">
                     <Button

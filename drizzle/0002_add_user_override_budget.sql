@@ -1,0 +1,1 @@
+ALTER TABLE `decision_journal` ADD `user_override_budget` real;

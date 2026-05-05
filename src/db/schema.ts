@@ -817,6 +817,12 @@ export const decisionJournal = sqliteTable("decision_journal", {
   riskLevel: text("risk_level", { enum: ["low", "medium", "high"] }),
   actionTaken: integer("action_taken", { mode: "boolean" }).notNull().default(false),
   actionResult: text("action_result"), // JSON
+  // When the operator approves a boost_budget with a custom amount instead of
+  // the default *1.5, the chosen value lives here. Read by the executor;
+  // overrides the projected budget at whatever level (ad_set/campaign) ends
+  // up holding the budget. Stored in major currency units (RM), same as
+  // metaAdSets.dailyBudget / metaCampaigns.dailyBudget.
+  userOverrideBudget: real("user_override_budget"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
