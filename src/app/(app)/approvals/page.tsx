@@ -18,6 +18,17 @@ type RecommendationAction = "kill" | "pause" | "boost_budget" | "duplicate";
 type Verdict = "approved" | "rejected" | "pending";
 type Risk = "low" | "medium" | "high";
 
+// Mirrors action-executor.ts:163-205 fall-through:
+//   ad_set daily → campaign daily (CBO) → campaign lifetime (CBO) → none.
+type BudgetLevel = "ad_set" | "campaign_daily" | "campaign_lifetime" | "none";
+
+type BudgetInfo = {
+  level: BudgetLevel;
+  current: number | null;
+  // executor multiplies by 1.5 and rounds to cents
+  projected: number | null;
+};
+
 type Entry = {
   id: string;
   brandId: string;
@@ -31,6 +42,7 @@ type Entry = {
   riskLevel: Risk | null;
   guardVerdict: Verdict;
   createdAt: string;
+  budgetInfo?: BudgetInfo;
 };
 
 const actionVariant: Record<
@@ -52,13 +64,66 @@ const actionLabel: Record<RecommendationAction, string> = {
 
 // Plain-English description of what gets executed on approval — surfaced
 // next to the Approve button so the user knows the consequence of clicking
-// it, instead of having to decode the action badge.
-const actionDescription: Record<RecommendationAction, string> = {
+// it, instead of having to decode the action badge. boost_budget is dynamic
+// (see describeBoostBudget) because the executor targets ad-set or campaign
+// budget depending on which one is set.
+const actionDescription: Record<Exclude<RecommendationAction, "boost_budget">, string> = {
   kill: "Permanently delete this ad on Meta. Cannot be undone.",
   pause: "Pause this ad on Meta. You can re-activate it later.",
-  boost_budget: "Increase the daily budget on this ad's ad set on Meta.",
   duplicate: "Duplicate this ad with the brand's standard test settings on Meta.",
 };
+
+function fmtRM(n: number): string {
+  return `RM ${n.toFixed(2)}`;
+}
+
+function describeBoostBudget(info: BudgetInfo | undefined): string {
+  if (!info || info.level === "none" || info.current === null || info.projected === null) {
+    return "Increase budget by 50% on Meta. No budget found at ad-set or campaign level — approval will likely fail.";
+  }
+  const delta = `${fmtRM(info.current)} → ${fmtRM(info.projected)}`;
+  if (info.level === "ad_set") {
+    return `Increase the ad-set daily budget on Meta (${delta}).`;
+  }
+  if (info.level === "campaign_daily") {
+    return `Increase the campaign (CBO) daily budget on Meta (${delta}). Affects every ad set in this campaign.`;
+  }
+  return `Increase the campaign (CBO) lifetime budget on Meta (${delta}). Affects every ad set in this campaign.`;
+}
+
+const budgetLevelLabel: Record<BudgetLevel, string> = {
+  ad_set: "Ad set",
+  campaign_daily: "Campaign (CBO, daily)",
+  campaign_lifetime: "Campaign (CBO, lifetime)",
+  none: "None found",
+};
+
+function computeBudgetInfo(raw: Record<string, unknown>): BudgetInfo {
+  const adSet = raw.adSet as
+    | {
+        dailyBudget?: number | null;
+        campaign?: { dailyBudget?: number | null; lifetimeBudget?: number | null } | null;
+      }
+    | null
+    | undefined;
+  const adSetBudget = adSet?.dailyBudget ?? null;
+  const cbo = adSet?.campaign;
+  const cboDaily = cbo?.dailyBudget ?? null;
+  const cboLifetime = cbo?.lifetimeBudget ?? null;
+
+  const project = (n: number) => Math.round(n * 1.5 * 100) / 100;
+
+  if (adSetBudget !== null && adSetBudget > 0) {
+    return { level: "ad_set", current: adSetBudget, projected: project(adSetBudget) };
+  }
+  if (cboDaily !== null && cboDaily > 0) {
+    return { level: "campaign_daily", current: cboDaily, projected: project(cboDaily) };
+  }
+  if (cboLifetime !== null && cboLifetime > 0) {
+    return { level: "campaign_lifetime", current: cboLifetime, projected: project(cboLifetime) };
+  }
+  return { level: "none", current: null, projected: null };
+}
 
 const riskColor: Record<Risk, string> = {
   low: "text-emerald-300",
@@ -91,6 +156,8 @@ export default function ApprovalsPage() {
             ...row,
             brandName: (e.brand as { name?: string } | null)?.name,
             adName: (e.ad as { name?: string } | null)?.name,
+            budgetInfo:
+              row.recommendation === "boost_budget" ? computeBudgetInfo(e) : undefined,
           };
         }),
       );
@@ -317,8 +384,15 @@ export default function ApprovalsPage() {
                       If approved
                     </span>
                     <span className="ml-2">
-                      {actionDescription[entry.recommendation]}
+                      {entry.recommendation === "boost_budget"
+                        ? describeBoostBudget(entry.budgetInfo)
+                        : actionDescription[entry.recommendation]}
                     </span>
+                    {entry.recommendation === "boost_budget" && entry.budgetInfo && (
+                      <div className="mt-1 text-[10px] uppercase tracking-wider text-indigo-700">
+                        Target: {budgetLevelLabel[entry.budgetInfo.level]}
+                      </div>
+                    )}
                   </div>
 
                   {entry.guardReasoning && (

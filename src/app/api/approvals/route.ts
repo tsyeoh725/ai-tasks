@@ -26,6 +26,15 @@ export async function GET() {
     with: {
       brand: { columns: { id: true, name: true } },
       ad: { columns: { id: true, name: true, metaAdId: true } },
+      // adSet + campaign budgets needed so the UI can tell the user
+      // which level a boost_budget approval will actually hit (CBO
+      // campaigns hold the budget at campaign level, not ad set).
+      adSet: {
+        columns: { id: true, dailyBudget: true },
+        with: {
+          campaign: { columns: { id: true, dailyBudget: true, lifetimeBudget: true } },
+        },
+      },
     },
     orderBy: (d, { desc }) => [desc(d.createdAt)],
   });
