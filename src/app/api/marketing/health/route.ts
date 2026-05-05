@@ -1,8 +1,11 @@
 import { db } from "@/db";
-import { telegramLinks } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { brands, telegramLinks } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { brandsAccessibleWhere } from "@/lib/brand-access";
 
 // POST /api/marketing/health — connectivity check for Meta / Claude / Telegram / DB.
 // Returns a uniform shape per service: { ok: boolean, message: string } so the
@@ -26,12 +29,30 @@ export async function POST() {
     database: { ok: false, message: "" },
   };
 
-  // 1. Meta API — uses the user's META_ACCESS_TOKEN env (per-brand tokens live in
-  // an undocumented column and aren't checkable here without a specific brand).
+  // 1. Meta API — resolves the same way every brand sync does: per-brand
+  //    metaAccessToken first, then the user's globalSettings.meta_access_token,
+  //    finally the env fallback. Probing only the env token reported FAIL for
+  //    users who configured their token in Settings instead.
   try {
-    const token = process.env.META_ACCESS_TOKEN;
+    const ws = await resolveWorkspaceForUser(user.id);
+    const accessibleBrand = await db.query.brands.findFirst({
+      where: and(brandsAccessibleWhere(ws, user.id), eq(brands.isActive, true))!,
+      columns: { id: true, userId: true },
+    });
+    // resolveMetaAccessToken treats metaAccessToken as optional — the column
+    // doesn't exist in the schema yet (reserved for per-brand overrides) so
+    // we just pass the brand's userId and let the resolver fall through to
+    // globalSettings + env.
+    const tokenSource = accessibleBrand
+      ? { userId: accessibleBrand.userId, metaAccessToken: null }
+      : { userId: user.id, metaAccessToken: null };
+    const token = await resolveMetaAccessToken(tokenSource);
+
     if (!token) {
-      results.meta = { ok: false, message: "META_ACCESS_TOKEN not set" };
+      results.meta = {
+        ok: false,
+        message: "No Meta access token — set one under Settings → Meta Ads",
+      };
     } else {
       const res = await fetch(`https://graph.facebook.com/v21.0/me?access_token=${token}`);
       if (res.ok) {

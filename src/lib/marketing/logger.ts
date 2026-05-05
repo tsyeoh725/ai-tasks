@@ -103,6 +103,18 @@ export async function flushLogs(sessionLabel?: string, userId?: string) {
   // we can't persist; drop the logs (still printed to console) rather than crash.
   if (!userId) return;
 
+  // Bundle every log entry from the run into one row keyed by sessionLabel
+  // so the Logs page can render the run as a single expandable card. Also
+  // mark the row's level by the worst level present so list-level filters
+  // ("show only errors") work without expanding every row.
+  const worstLevel: LogLevel = logsToFlush.some((l) => l.level === "error")
+    ? "error"
+    : logsToFlush.some((l) => l.level === "warn")
+      ? "warn"
+      : logsToFlush.some((l) => l.level === "info")
+        ? "info"
+        : "debug";
+
   try {
     await db.insert(marketingAuditLog).values({
       id: uuid(),
@@ -111,6 +123,7 @@ export async function flushLogs(sessionLabel?: string, userId?: string) {
       eventType: "system_log",
       entityType: "session",
       entityId: sessionLabel || "unknown",
+      level: worstLevel,
       payload: JSON.stringify({ logs: logsToFlush }),
       createdAt: new Date(),
     });

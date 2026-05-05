@@ -32,9 +32,9 @@ type LogEntry = {
 
 type Session = {
   id: string;
-  created_at: string;
-  entity_id: string;
-  payload: { logs: LogEntry[] };
+  createdAt: string;
+  entityId: string;
+  payload: { logs: LogEntry[] } | null;
 };
 
 const levelBadge: Record<LogLevel, "destructive" | "warning" | "default" | "secondary"> = {
@@ -181,10 +181,10 @@ export default function LogsPage() {
                     <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
                   )}
                   <span className="text-xs font-mono text-gray-800">
-                    {session.entity_id}
+                    {session.entityId}
                   </span>
                   <span className="text-[11px] text-gray-400 font-mono">
-                    {new Date(session.created_at).toLocaleString()}
+                    {new Date(session.createdAt).toLocaleString()}
                   </span>
                   <span className="text-[11px] text-gray-400 ml-auto font-mono">
                     {logs.length} entries

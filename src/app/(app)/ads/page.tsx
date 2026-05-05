@@ -307,26 +307,48 @@ export default function AdsPage() {
   async function handleRunAudit() {
     if (auditing) return;
     setAuditing(true);
-    setStatus("Running audit across all brands…");
-    try {
-      const res = await fetch("/api/cron/monitor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const results = (data.results || []) as Array<{ brandName: string; recommendationsCount: number; pending: number; tasks?: { created: number } }>;
-        const totalRecs = results.reduce((s, r) => s + (r.recommendationsCount || 0), 0);
-        const totalPending = results.reduce((s, r) => s + (r.pending || 0), 0);
-        const totalTasks = results.reduce((s, r) => s + (r.tasks?.created || 0), 0);
-        setStatus(`Audit complete — ${results.length} brand${results.length === 1 ? "" : "s"} scanned, ${totalRecs} recommendation${totalRecs === 1 ? "" : "s"}, ${totalPending} pending approval, ${totalTasks} task${totalTasks === 1 ? "" : "s"} created`);
-      } else {
-        setStatus(data.error || "Audit failed");
+    setStatus(null);
+
+    // Audit per-brand so we can show "Auditing X (i/N)…" progress, mirroring
+    // the Sync all data flow. The endpoint already accepts { brandId } and
+    // returns { results: [...] } with one entry; we just aggregate.
+    type AuditResult = {
+      brandName: string;
+      recommendationsCount: number;
+      pending: number;
+      tasks?: { created: number };
+      errors?: string[];
+    };
+    const aggregate: AuditResult[] = [];
+    let failed = 0;
+    const total = brands.length;
+    for (let i = 0; i < brands.length; i++) {
+      const b = brands[i];
+      setStatus(`Auditing ${b.name} (${i + 1}/${total})…`);
+      try {
+        const res = await fetch("/api/cron/monitor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brandId: b.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray(data.results)) {
+          aggregate.push(...(data.results as AuditResult[]));
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
       }
-    } catch {
-      setStatus("Audit failed (network error)");
     }
+
+    const totalRecs = aggregate.reduce((s, r) => s + (r.recommendationsCount || 0), 0);
+    const totalPending = aggregate.reduce((s, r) => s + (r.pending || 0), 0);
+    const totalTasks = aggregate.reduce((s, r) => s + (r.tasks?.created || 0), 0);
+    const failedSuffix = failed > 0 ? `, ${failed} failed` : "";
+    setStatus(
+      `Audit complete — ${aggregate.length}/${total} brand${aggregate.length === 1 ? "" : "s"} scanned, ${totalRecs} recommendation${totalRecs === 1 ? "" : "s"}, ${totalPending} pending approval, ${totalTasks} task${totalTasks === 1 ? "" : "s"} created${failedSuffix}`,
+    );
     setAuditing(false);
   }
 

@@ -14,6 +14,7 @@ import {
 } from "@/lib/marketing/task-generator";
 import { resolveWorkspaceForUser } from "@/lib/workspace";
 import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
+import { flushLogs, log } from "@/lib/marketing/logger";
 
 function mapRecommendationToKind(action: string): DetectedConditionKind | null {
   // Map monitor recommendations to task-generator conditions where sensible.
@@ -86,6 +87,16 @@ export async function POST(req: Request) {
 
   const results: Array<MonitorCycleResult & { tasks?: { created: number; skipped: number } }> = [];
 
+  // Group log flushes per (user, audit run) so the Logs page surfaces this run
+  // as one expandable "session" card. Cron-triggered runs get one session per
+  // brand (since each brand may belong to a different user); UI-triggered
+  // runs share a single session id per click.
+  const sessionLabel = `audit-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  log("info", "monitor", `Audit started for ${targets.length} brand(s)`, {
+    sessionLabel,
+    brands: targets.map((t) => t.name),
+  });
+
   for (const target of targets) {
     let cycleResult: MonitorCycleResult;
     try {
@@ -127,6 +138,11 @@ export async function POST(req: Request) {
     }
 
     results.push({ ...cycleResult, tasks: taskResult });
+
+    // Flush per-brand so logs are persisted under the brand's owner. Cron
+    // runs may scan brands across multiple users; each gets its own session
+    // row keyed by user.
+    await flushLogs(`${sessionLabel}-${target.id}`, target.userId);
   }
 
   return NextResponse.json({ message: "Monitor cycle complete", results });

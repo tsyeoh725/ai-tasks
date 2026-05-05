@@ -32,12 +32,33 @@ export async function GET(req: Request) {
     if (!Number.isNaN(end.getTime())) conditions.push(lte(marketingAuditLog.createdAt, end));
   }
 
-  const logs = await db.query.marketingAuditLog.findMany({
+  const rows = await db.query.marketingAuditLog.findMany({
     where: and(...conditions),
     orderBy: (l, { desc }) => [desc(l.createdAt)],
     limit,
     offset,
   });
 
-  return NextResponse.json({ logs, limit, offset });
+  // Each row is a "session" of bundled log entries. Parse `payload` so the
+  // page can render the entries directly without re-parsing on the client.
+  const sessions = rows.map((r) => {
+    let parsed: unknown = null;
+    try {
+      parsed = r.payload ? JSON.parse(r.payload) : null;
+    } catch {
+      parsed = { raw: r.payload };
+    }
+    return {
+      id: r.id,
+      sessionId: r.sessionId,
+      entityId: r.entityId,
+      entityType: r.entityType,
+      eventType: r.eventType,
+      level: r.level,
+      createdAt: r.createdAt,
+      payload: parsed,
+    };
+  });
+
+  return NextResponse.json({ sessions, limit, offset });
 }

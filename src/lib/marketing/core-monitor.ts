@@ -263,10 +263,39 @@ export async function runMonitorCycleForBrand(brandId: string): Promise<MonitorC
     createdAt: m.createdAt as Date,
   }));
 
+  // Map each action to the brand toggle that gates auto-execution. Mirrors
+  // the same mapping inside action-executor so the gating story stays
+  // consistent — if the action's toggle is off, the AI's "approved" verdict
+  // can't actually run, so we downgrade it to "pending" here. That way the
+  // entry surfaces in /approvals where a human can apply it manually instead
+  // of silently sitting in the Decision Journal as approved-but-untaken.
+  const ACTION_TOGGLE: Record<
+    Recommendation["action"],
+    keyof BrandConfig["toggles"]
+  > = {
+    kill: "killEnabled",
+    pause: "killEnabled",
+    boost_budget: "budgetEnabled",
+    duplicate: "duplicateEnabled",
+  };
+
   // Evaluate each recommendation and persist to decisionJournal
   for (const rec of recommendations) {
     try {
       const verdict = await evaluateRecommendation(rec, config, memoryEntries);
+
+      const toggleKey = ACTION_TOGGLE[rec.action];
+      const toggleOn = !!config.toggles[toggleKey];
+      if (verdict.verdict === "approved" && !toggleOn) {
+        log(
+          "info",
+          "monitor",
+          `Downgrading approved verdict to pending — toggle "${toggleKey}" is off`,
+          { adId: rec.adId, action: rec.action, brandId },
+        );
+        verdict.verdict = "pending";
+        verdict.reasoning = `${verdict.reasoning}\n\n[Auto-routed to approvals: the "${rec.action}" automation toggle is off, so this still needs a human to apply it.]`;
+      }
 
       if (verdict.verdict === "approved") result.approved++;
       else if (verdict.verdict === "rejected") result.rejected++;

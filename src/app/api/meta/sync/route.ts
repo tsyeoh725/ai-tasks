@@ -1,12 +1,12 @@
 import { db } from "@/db";
-import { brands, marketingAuditLog } from "@/db/schema";
+import { brands } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
-import { v4 as uuid } from "uuid";
 import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
 import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { canAccessBrand } from "@/lib/brand-access";
+import { flushLogs, log } from "@/lib/marketing/logger";
 
 // POST /api/meta/sync  { brandId, startDate?, endDate? }
 // Note: our sync implementation uses a trailing-window (dateRange in days) rather than
@@ -60,6 +60,13 @@ export async function POST(req: Request) {
     if (!Number.isNaN(diff) && diff > 0) dateRange = diff;
   }
 
+  const sessionLabel = `sync-${brand.name}-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  log("info", "sync", `Manual sync started for ${brand.name}`, {
+    brandId: brand.id,
+    dateRange,
+    costActionType,
+  });
+
   try {
     const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, user.id, accessToken);
     const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, user.id, accessToken);
@@ -72,22 +79,14 @@ export async function POST(req: Request) {
       costActionType,
     );
 
-    await db.insert(marketingAuditLog).values({
-      id: uuid(),
-      userId: user.id,
-      eventType: "manual_sync",
-      entityType: "brand",
-      entityId: brand.id,
-      payload: JSON.stringify({
-        dateRange,
-        campaignCount,
-        adSetCount,
-        insights,
-        costActionType,
-      }),
-      level: insights.chunksFailed > 0 ? "warn" : "info",
-      createdAt: new Date(),
-    });
+    log(
+      insights.chunksFailed > 0 ? "warn" : "info",
+      "sync",
+      `Sync complete for ${brand.name}`,
+      { campaignCount, adSetCount, insights },
+    );
+
+    await flushLogs(sessionLabel, user.id);
 
     return NextResponse.json({
       success: true,
@@ -102,6 +101,10 @@ export async function POST(req: Request) {
       },
     });
   } catch (err) {
+    log("error", "sync", `Sync failed for ${brand.name}`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    await flushLogs(sessionLabel, user.id);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Sync failed" },
       { status: 500 },
