@@ -190,12 +190,20 @@ export function TopHeader() {
           aria-label="AI Tasks home"
         >
           <Image
-            src="/logo.png"
+            src="/logo-light.png"
             alt=""
             width={28}
             height={28}
             priority
-            className="rounded-md"
+            className="rounded-md block dark:hidden"
+          />
+          <Image
+            src="/logo-dark.png"
+            alt=""
+            width={28}
+            height={28}
+            priority
+            className="rounded-md hidden dark:block"
           />
           <span className="font-semibold text-sm text-slate-900 dark:text-slate-100">
             AI Tasks

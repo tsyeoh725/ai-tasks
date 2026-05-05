@@ -42,5 +42,9 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Skip the proxy for static assets — Next's auto-generated icon routes
+  // (icon.png, apple-icon.png) and anything served from /public must not
+  // bounce to /login, otherwise the browser tab favicon and login-page
+  // imagery render as broken images for logged-out visitors.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|.*\\.(?:png|jpg|jpeg|svg|webp|gif|ico|woff|woff2)).*)"],
 };
