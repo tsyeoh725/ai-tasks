@@ -18,6 +18,7 @@ import {
   marketingAuditLog,
 } from "@/db/schema";
 import * as metaApi from "@/lib/marketing/meta-api";
+import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { log } from "@/lib/marketing/logger";
 import type {
   BrandConfig,
@@ -80,16 +81,20 @@ async function logAudit(
 async function getAccessTokenForBrand(brandId: string): Promise<string> {
   const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
   if (!brand) throw new Error(`Brand not found: ${brandId}`);
-  const brandToken = (brand as unknown as { metaAccessToken?: string | null }).metaAccessToken;
-  if (brandToken) return brandToken;
 
-  const envToken = process.env.META_ACCESS_TOKEN;
-  if (!envToken) {
+  // Use the same resolver health/sync use: brand.metaAccessToken (reserved
+  // for future per-brand keys) → globalSettings.meta_access_token (set via
+  // Settings → Meta Ads UI) → META_ACCESS_TOKEN env. Previously this
+  // function only checked the brand column + env, so approvals failed even
+  // though the user had set a token through Settings.
+  const brandLike = brand as unknown as { metaAccessToken?: string | null; userId: string };
+  const token = await resolveMetaAccessToken(brandLike);
+  if (!token) {
     throw new Error(
-      `No Meta access token for brand ${brandId} (no metaAccessToken column yet, and META_ACCESS_TOKEN env not set)`,
+      `No Meta access token for brand ${brandId} — set one in Settings → Meta Ads, or via META_ACCESS_TOKEN env.`,
     );
   }
-  return envToken;
+  return token;
 }
 
 async function executeKillOrPause(
