@@ -10,6 +10,7 @@ import {
   Brain,
   Send,
   Globe,
+  Bot,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 type ServiceStatus = {
   ok: boolean;
   message: string;
+  latencyMs?: number;
 };
 
 type Results = Record<string, ServiceStatus>;
@@ -29,16 +31,22 @@ const services: {
   icon: typeof Database;
 }[] = [
   {
+    key: "jarvis_openai",
+    label: "Jarvis (OpenAI)",
+    description: "Assistant, digest, scheduling",
+    icon: Bot,
+  },
+  {
+    key: "audit_anthropic",
+    label: "Audit (Anthropic)",
+    description: "AI Guard agent",
+    icon: Brain,
+  },
+  {
     key: "meta",
     label: "Meta API",
     description: "Facebook & Instagram Ads",
     icon: Globe,
-  },
-  {
-    key: "claude",
-    label: "Claude AI",
-    description: "AI Guard agent",
-    icon: Brain,
   },
   {
     key: "telegram",
@@ -79,7 +87,7 @@ export default function HealthPage() {
           System Health
         </h1>
         <p className="text-sm text-gray-500 mt-1">
-          Check connectivity for Meta API, Claude, Telegram, and Database
+          Check every external API: Jarvis (OpenAI), Audit (Anthropic), Meta, Telegram, Database
         </p>
       </div>
 
@@ -172,6 +180,9 @@ export default function HealthPage() {
                         }
                       >
                         {status.message}
+                        {typeof status.latencyMs === "number" && (
+                          <span className="text-gray-400"> ({status.latencyMs}ms)</span>
+                        )}
                       </p>
                     )}
                   </div>

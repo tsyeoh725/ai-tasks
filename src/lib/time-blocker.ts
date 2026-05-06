@@ -256,7 +256,10 @@ Tasks to schedule:
 ${JSON.stringify(tasksFormatted, null, 2)}`;
 
   try {
-    const aiResponse = await generateAiResponse(scheduleSystemPrompt, scheduleUserPrompt);
+    const aiResponse = await generateAiResponse(scheduleSystemPrompt, scheduleUserPrompt, {
+      callSite: "lib.time-blocker.generateDaySchedule",
+      userId,
+    });
 
     const jsonMatch = aiResponse.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return [];

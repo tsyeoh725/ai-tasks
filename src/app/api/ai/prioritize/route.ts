@@ -72,7 +72,10 @@ Consider: due dates, available time remaining until deadline, current status, st
 Return ONLY valid JSON like: [{"id":"...", "score": 95, "reason": "...", "estimatedHours": 2, "category": "deep_work", "schedulable": true, "warning": null}]`;
 
   try {
-    const response = await generateAiResponse(systemPrompt, `Tasks to prioritize:\n${taskList}`);
+    const response = await generateAiResponse(systemPrompt, `Tasks to prioritize:\n${taskList}`, {
+      callSite: "/api/ai/prioritize",
+      userId: user.id,
+    });
 
     // Parse AI response
     const jsonMatch = response.match(/\[[\s\S]*\]/);

@@ -110,7 +110,10 @@ Task: "${task.title}" | Status: ${task.status} | Priority: ${task.priority} | Pr
 ${task.description ? `Description: ${task.description}` : ""}`;
 
     try {
-      const response = await generateAiResponse(systemPrompt, message);
+      const response = await generateAiResponse(systemPrompt, message, {
+        callSite: "lib.telegram.task-reply",
+        userId: link.userId,
+      });
 
       // Save AI response
       await db.insert(taskComments).values({
@@ -161,7 +164,8 @@ ${task.description ? `Description: ${task.description}` : ""}`;
     try {
       const response = await generateAiResponse(
         "You are a productivity assistant on Telegram. Be very concise (under 150 words). Give a daily briefing.",
-        `My tasks:\n${taskList}\n\nGive me my daily briefing.`
+        `My tasks:\n${taskList}\n\nGive me my daily briefing.`,
+        { callSite: "lib.telegram.digest", userId: link.userId },
       );
       await ctx.reply(response);
     } catch {

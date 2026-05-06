@@ -1,13 +1,24 @@
 // Typed accessors for the global `app_config` key/value store.
 // Used by the Settings UI to override env-var defaults at runtime.
+//
+// **Key split (May 2026):** Jarvis (the assistant) and Audit (the marketing
+// guard) now use separate API keys so we can attribute spend to one feature
+// vs the other. Jarvis points at OpenAI; Audit points at Anthropic.
+// The old single-pair (`ai.openai_api_key` / `ai.anthropic_api_key`) is kept
+// as a transparent fallback so an existing install keeps working — newly
+// saved keys land in the split slots.
 import { db } from "@/db";
 import { appConfig } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { decrypt, encrypt } from "./secrets";
 
 const KEYS = {
-  openaiApiKey: "ai.openai_api_key",
-  anthropicApiKey: "ai.anthropic_api_key",
+  // New split keys (preferred):
+  jarvisOpenaiKey: "ai.jarvis_openai_key",
+  auditAnthropicKey: "ai.audit_anthropic_key",
+  // Legacy keys (kept for backward compat — read-only fallback):
+  legacyOpenaiKey: "ai.openai_api_key",
+  legacyAnthropicKey: "ai.anthropic_api_key",
   aiModel: "ai.model",
 } as const;
 
@@ -50,12 +61,42 @@ async function writeSecret(key: ConfigKey, value: string): Promise<void> {
 
 // ---- public, typed API ----
 
+// Resolution order for each key:
+// 1. New split slot in DB (set via Settings UI).
+// 2. New env var (FEATURE-specific: OPENAI_API_KEY_JARVIS / ANTHROPIC_API_KEY_AUDIT).
+// 3. Legacy DB slot (pre-split install).
+// 4. Legacy env var (pre-split install).
+// 5. null.
+
+export async function getJarvisOpenAIKey(): Promise<string | null> {
+  return (
+    (await readSecret(KEYS.jarvisOpenaiKey)) ??
+    process.env.OPENAI_API_KEY_JARVIS ??
+    (await readSecret(KEYS.legacyOpenaiKey)) ??
+    process.env.OPENAI_API_KEY ??
+    null
+  );
+}
+
+export async function getAuditAnthropicKey(): Promise<string | null> {
+  return (
+    (await readSecret(KEYS.auditAnthropicKey)) ??
+    process.env.ANTHROPIC_API_KEY_AUDIT ??
+    (await readSecret(KEYS.legacyAnthropicKey)) ??
+    process.env.ANTHROPIC_API_KEY ??
+    null
+  );
+}
+
+// Legacy accessors — kept so older modules compile, but they delegate to
+// the split accessors. Direct callers should migrate to getJarvisOpenAIKey
+// / getAuditAnthropicKey for clarity.
 export async function getOpenAIKey(): Promise<string | null> {
-  return (await readSecret(KEYS.openaiApiKey)) ?? process.env.OPENAI_API_KEY ?? null;
+  return getJarvisOpenAIKey();
 }
 
 export async function getAnthropicKey(): Promise<string | null> {
-  return (await readSecret(KEYS.anthropicApiKey)) ?? process.env.ANTHROPIC_API_KEY ?? null;
+  return getAuditAnthropicKey();
 }
 
 export async function getAiModel(): Promise<string | null> {
@@ -63,55 +104,68 @@ export async function getAiModel(): Promise<string | null> {
   return dbVal ?? process.env.AI_MODEL ?? null;
 }
 
-export async function setOpenAIKey(key: string): Promise<void> {
-  await writeSecret(KEYS.openaiApiKey, key);
+export async function setJarvisOpenAIKey(key: string): Promise<void> {
+  await writeSecret(KEYS.jarvisOpenaiKey, key);
 }
 
-export async function setAnthropicKey(key: string): Promise<void> {
-  await writeSecret(KEYS.anthropicApiKey, key);
+export async function setAuditAnthropicKey(key: string): Promise<void> {
+  await writeSecret(KEYS.auditAnthropicKey, key);
 }
 
 export async function setAiModel(model: string): Promise<void> {
   await writeRaw(KEYS.aiModel, model);
 }
 
-export async function clearOpenAIKey(): Promise<void> {
-  await deleteRaw(KEYS.openaiApiKey);
+export async function clearJarvisOpenAIKey(): Promise<void> {
+  await deleteRaw(KEYS.jarvisOpenaiKey);
 }
 
-export async function clearAnthropicKey(): Promise<void> {
-  await deleteRaw(KEYS.anthropicApiKey);
+export async function clearAuditAnthropicKey(): Promise<void> {
+  await deleteRaw(KEYS.auditAnthropicKey);
 }
 
 /** Status object for the Settings UI — never returns the raw key. */
+export type AiKeySource = "db" | "env" | "legacy_db" | "legacy_env" | "none";
+export type AiKeyStatus = { configured: boolean; source: AiKeySource; lastFour: string | null };
 export type AiKeysStatus = {
-  openai: { configured: boolean; source: "db" | "env" | "none"; lastFour: string | null };
-  anthropic: { configured: boolean; source: "db" | "env" | "none"; lastFour: string | null };
+  jarvis: AiKeyStatus;
+  audit: AiKeyStatus;
   model: string | null;
 };
 
+async function resolveStatus(
+  splitDbKey: ConfigKey,
+  splitEnvVar: string,
+  legacyDbKey: ConfigKey,
+  legacyEnvVar: string,
+): Promise<AiKeyStatus> {
+  const lastFour = (s: string | null) => (s ? s.slice(-4) : null);
+  const splitDb = await readSecret(splitDbKey);
+  if (splitDb) return { configured: true, source: "db", lastFour: lastFour(splitDb) };
+  const splitEnv = process.env[splitEnvVar] ?? null;
+  if (splitEnv) return { configured: true, source: "env", lastFour: lastFour(splitEnv) };
+  const legacyDb = await readSecret(legacyDbKey);
+  if (legacyDb) return { configured: true, source: "legacy_db", lastFour: lastFour(legacyDb) };
+  const legacyEnv = process.env[legacyEnvVar] ?? null;
+  if (legacyEnv) return { configured: true, source: "legacy_env", lastFour: lastFour(legacyEnv) };
+  return { configured: false, source: "none", lastFour: null };
+}
+
 export async function getAiKeysStatus(): Promise<AiKeysStatus> {
-  const [openaiDb, anthropicDb, model] = await Promise.all([
-    readSecret(KEYS.openaiApiKey),
-    readSecret(KEYS.anthropicApiKey),
+  const [jarvis, audit, model] = await Promise.all([
+    resolveStatus(
+      KEYS.jarvisOpenaiKey,
+      "OPENAI_API_KEY_JARVIS",
+      KEYS.legacyOpenaiKey,
+      "OPENAI_API_KEY",
+    ),
+    resolveStatus(
+      KEYS.auditAnthropicKey,
+      "ANTHROPIC_API_KEY_AUDIT",
+      KEYS.legacyAnthropicKey,
+      "ANTHROPIC_API_KEY",
+    ),
     getAiModel(),
   ]);
-  const openaiEnv = process.env.OPENAI_API_KEY ?? null;
-  const anthropicEnv = process.env.ANTHROPIC_API_KEY ?? null;
-
-  const lastFour = (s: string | null) => (s ? s.slice(-4) : null);
-
-  return {
-    openai: openaiDb
-      ? { configured: true, source: "db", lastFour: lastFour(openaiDb) }
-      : openaiEnv
-        ? { configured: true, source: "env", lastFour: lastFour(openaiEnv) }
-        : { configured: false, source: "none", lastFour: null },
-    anthropic: anthropicDb
-      ? { configured: true, source: "db", lastFour: lastFour(anthropicDb) }
-      : anthropicEnv
-        ? { configured: true, source: "env", lastFour: lastFour(anthropicEnv) }
-        : { configured: false, source: "none", lastFour: null },
-    model,
-  };
+  return { jarvis, audit, model };
 }

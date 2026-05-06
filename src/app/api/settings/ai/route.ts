@@ -1,14 +1,14 @@
-// Read / set / clear the AI provider keys + model used by getModel().
+// Read / set / clear the AI provider keys + model used by Jarvis and Audit.
 // Values stored in `app_config` are encrypted (AES-256-GCM keyed off NEXTAUTH_SECRET).
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
-  clearAnthropicKey,
-  clearOpenAIKey,
+  clearAuditAnthropicKey,
+  clearJarvisOpenAIKey,
   getAiKeysStatus,
   setAiModel,
-  setAnthropicKey,
-  setOpenAIKey,
+  setAuditAnthropicKey,
+  setJarvisOpenAIKey,
 } from "@/lib/app-config";
 
 async function requireUser() {
@@ -26,8 +26,8 @@ export async function GET() {
 }
 
 type PutBody = {
-  openaiApiKey?: string;
-  anthropicApiKey?: string;
+  jarvisOpenaiKey?: string;
+  auditAnthropicKey?: string;
   model?: string | null;
 };
 
@@ -43,16 +43,16 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  if (typeof body.openaiApiKey === "string") {
-    const v = body.openaiApiKey.trim();
-    if (v) await setOpenAIKey(v);
-    else await clearOpenAIKey();
+  if (typeof body.jarvisOpenaiKey === "string") {
+    const v = body.jarvisOpenaiKey.trim();
+    if (v) await setJarvisOpenAIKey(v);
+    else await clearJarvisOpenAIKey();
   }
 
-  if (typeof body.anthropicApiKey === "string") {
-    const v = body.anthropicApiKey.trim();
-    if (v) await setAnthropicKey(v);
-    else await clearAnthropicKey();
+  if (typeof body.auditAnthropicKey === "string") {
+    const v = body.auditAnthropicKey.trim();
+    if (v) await setAuditAnthropicKey(v);
+    else await clearAuditAnthropicKey();
   }
 
   if (typeof body.model === "string") {

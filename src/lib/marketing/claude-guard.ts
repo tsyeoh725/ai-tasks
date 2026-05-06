@@ -1,10 +1,11 @@
 // AI Guard — takes a Recommendation and returns a structured verdict.
 // Ported from jarvis/src/lib/services/claude-client.ts. Uses @anthropic-ai/sdk.
 import Anthropic from "@anthropic-ai/sdk";
-import { getAnthropicKey } from "@/lib/app-config";
+import { getAuditAnthropicKey } from "@/lib/app-config";
 import { db } from "@/db";
 import { globalSettings } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
+import { fromAnthropicUsage, recordAiUsage, type AiUsageStatus } from "@/lib/ai-usage";
 
 // --- Shared types (mirrored from Jarvis) ---
 
@@ -97,16 +98,55 @@ export interface AgentMemoryEntry {
 let cachedClient: { key: string; client: Anthropic } | null = null;
 
 async function getClient(): Promise<Anthropic> {
-  const apiKey = await getAnthropicKey();
+  const apiKey = await getAuditAnthropicKey();
   if (!apiKey) {
     throw new Error(
-      "Anthropic API key not configured. Add one under Settings → AI, or set ANTHROPIC_API_KEY in the env.",
+      "Audit Anthropic API key not configured. Add one under Settings → AI (Audit), or set ANTHROPIC_API_KEY_AUDIT in the env.",
     );
   }
   if (cachedClient && cachedClient.key === apiKey) return cachedClient.client;
   const client = new Anthropic({ apiKey });
   cachedClient = { key: apiKey, client };
   return client;
+}
+
+function classifyAuditError(err: unknown): AiUsageStatus {
+  if (err instanceof Anthropic.APIError && err.status === 429) return "rate_limited";
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/rate.?limit|429/i.test(msg)) return "rate_limited";
+  return "error";
+}
+
+async function recordAuditCall(input: {
+  callSite: string;
+  model: string;
+  userId?: string | null;
+  startedAt: number;
+  response?: { usage?: unknown; _request_id?: string | null } | null;
+  error?: unknown;
+}): Promise<void> {
+  const status: AiUsageStatus = input.error ? classifyAuditError(input.error) : "success";
+  const requestId =
+    (input.response as { _request_id?: string | null } | null)?._request_id ?? null;
+  const usage = (input.response as { usage?: unknown } | null)?.usage as
+    | Parameters<typeof fromAnthropicUsage>[0]
+    | undefined;
+  await recordAiUsage({
+    feature: "audit",
+    callSite: input.callSite,
+    provider: "anthropic",
+    model: input.model,
+    userId: input.userId ?? null,
+    ...fromAnthropicUsage(usage),
+    latencyMs: Date.now() - input.startedAt,
+    status,
+    errorMessage: input.error
+      ? input.error instanceof Error
+        ? input.error.message
+        : String(input.error)
+      : null,
+    requestId,
+  });
 }
 
 // Default guard model — overridable via env for easy rollbacks.
@@ -335,13 +375,33 @@ ${brandContext}
 
 Validate this recommendation using the tool.`;
 
-  const response = await anthropic.messages.create({
+  const startedAt = Date.now();
+  let response;
+  try {
+    response = await anthropic.messages.create({
+      model: GUARD_MODEL,
+      max_tokens: 1024,
+      system: await buildGuardSystemPrompt(brandUserId),
+      tools: [GUARD_TOOL],
+      tool_choice: { type: "tool", name: "validate_recommendation" },
+      messages: [{ role: "user", content: userMessage }],
+    });
+  } catch (err) {
+    await recordAuditCall({
+      callSite: "claude-guard.evaluateRecommendation",
+      model: GUARD_MODEL,
+      userId: brandUserId,
+      startedAt,
+      error: err,
+    });
+    throw err;
+  }
+  await recordAuditCall({
+    callSite: "claude-guard.evaluateRecommendation",
     model: GUARD_MODEL,
-    max_tokens: 1024,
-    system: await buildGuardSystemPrompt(brandUserId),
-    tools: [GUARD_TOOL],
-    tool_choice: { type: "tool", name: "validate_recommendation" },
-    messages: [{ role: "user", content: userMessage }],
+    userId: brandUserId,
+    startedAt,
+    response,
   });
 
   const toolUse = response.content.find((block) => block.type === "tool_use");
@@ -385,7 +445,10 @@ export async function generateWeeklySummary(
     })
     .join("\n");
 
-  const response = await anthropic.messages.create({
+  const startedAt = Date.now();
+  let response;
+  try {
+    response = await anthropic.messages.create({
     model: SUMMARY_MODEL,
     max_tokens: 1500,
     messages: [
@@ -406,6 +469,21 @@ Format the summary as:
 Keep it actionable and under 500 words.`,
       },
     ],
+    });
+  } catch (err) {
+    await recordAuditCall({
+      callSite: "claude-guard.generateWeeklySummary",
+      model: SUMMARY_MODEL,
+      startedAt,
+      error: err,
+    });
+    throw err;
+  }
+  await recordAuditCall({
+    callSite: "claude-guard.generateWeeklySummary",
+    model: SUMMARY_MODEL,
+    startedAt,
+    response,
   });
 
   const textBlock = response.content.find((b) => b.type === "text");

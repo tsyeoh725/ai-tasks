@@ -60,7 +60,10 @@ Highlight: overdue tasks, urgent items, and suggest a focus order for today.`;
   const userMessage = `Here are my current tasks:\n${taskList}\n\nGive me my daily briefing.`;
 
   try {
-    const summary = await generateAiResponse(systemPrompt, userMessage);
+    const summary = await generateAiResponse(systemPrompt, userMessage, {
+      callSite: "/api/ai/digest",
+      userId: user.id,
+    });
     return NextResponse.json({ summary });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "AI service error";

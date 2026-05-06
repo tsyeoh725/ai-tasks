@@ -98,7 +98,10 @@ ${blockedList}
 Draft a project status update. Choose status based on: many slipped milestones or >2 blockers => at_risk or off_track; steady progress and no blockers => on_track; all done => complete.`;
 
   try {
-    const response = await generateAiResponse(systemPrompt, userMessage);
+    const response = await generateAiResponse(systemPrompt, userMessage, {
+      callSite: "/api/projects/[id]/ai-status",
+      userId: user.id,
+    });
     const match = response.match(/\{[\s\S]*\}/);
     if (!match) {
       return NextResponse.json({ error: "AI returned invalid format" }, { status: 502 });

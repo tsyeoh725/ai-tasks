@@ -159,6 +159,8 @@ export async function GET() {
   try {
     let captured: unknown = null;
     const result = await streamAiResponse(systemPrompt, prompt, {
+      callSite: "/api/ai/jarvis (briefing)",
+      userId: user.id,
       onError: (e) => {
         captured = e;
       },
@@ -208,6 +210,8 @@ export async function POST(req: Request) {
   try {
     let captured: unknown = null;
     const result = await streamAiResponse(systemPrompt, message, {
+      callSite: "/api/ai/jarvis (chat)",
+      userId: user.id,
       onError: (e) => {
         captured = e;
       },

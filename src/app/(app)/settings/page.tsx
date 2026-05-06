@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -600,13 +601,13 @@ function MonitorScheduleSection() {
 }
 
 function AiSection() {
-  type Source = "db" | "env" | "none";
+  type Source = "db" | "env" | "legacy_db" | "legacy_env" | "none";
   type ProviderStatus = { configured: boolean; source: Source; lastFour: string | null };
-  type Status = { openai: ProviderStatus; anthropic: ProviderStatus; model: string | null };
+  type Status = { jarvis: ProviderStatus; audit: ProviderStatus; model: string | null };
 
   const [status, setStatus] = useState<Status | null>(null);
-  const [openaiInput, setOpenaiInput] = useState("");
-  const [anthropicInput, setAnthropicInput] = useState("");
+  const [jarvisInput, setJarvisInput] = useState("");
+  const [auditInput, setAuditInput] = useState("");
   const [modelInput, setModelInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -636,8 +637,8 @@ function AiSection() {
       if (res.ok) {
         const data = (await res.json()) as Status;
         setStatus(data);
-        setOpenaiInput("");
-        setAnthropicInput("");
+        setJarvisInput("");
+        setAuditInput("");
         setMessage("Saved");
         setTimeout(() => setMessage(null), 2000);
       } else {
@@ -651,7 +652,16 @@ function AiSection() {
   function describe(s: ProviderStatus) {
     if (!s.configured) return <span className="text-muted-foreground">Not set</span>;
     const masked = s.lastFour ? `••••••••${s.lastFour}` : "•••••";
-    const sourceLabel = s.source === "db" ? "set via this UI" : "from .env";
+    const sourceLabel =
+      s.source === "db"
+        ? "set via this UI"
+        : s.source === "env"
+          ? "from .env"
+          : s.source === "legacy_db"
+            ? "legacy slot — re-save to migrate"
+            : s.source === "legacy_env"
+              ? "legacy .env var — set new var to migrate"
+              : "";
     return (
       <span className="font-mono text-xs">
         {masked} <span className="text-muted-foreground font-sans">({sourceLabel})</span>
@@ -662,71 +672,46 @@ function AiSection() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>AI</CardTitle>
-        <CardDescription>
-          Provider keys this app uses to call OpenAI / Anthropic. Saved keys are encrypted at rest
-          and override the matching environment variable.
-        </CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>AI</CardTitle>
+            <CardDescription>
+              Separate keys for <strong>Jarvis</strong> (the assistant — uses OpenAI) and{" "}
+              <strong>Audit</strong> (the marketing guard — uses Anthropic). Keeps the spend
+              lines clean. Saved keys are encrypted at rest and override the matching environment
+              variable.
+            </CardDescription>
+          </div>
+          <Link href="/settings/ai-usage">
+            <Button variant="outline" size="sm">View usage →</Button>
+          </Link>
+        </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* OpenAI */}
+        {/* Jarvis (OpenAI) */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <Label>OpenAI API Key</Label>
-            <div className="text-sm">{status ? describe(status.openai) : "Loading..."}</div>
+            <Label>Jarvis OpenAI Key</Label>
+            <div className="text-sm">{status ? describe(status.jarvis) : "Loading..."}</div>
           </div>
           <div className="flex gap-2">
             <Input
               type="password"
-              value={openaiInput}
-              onChange={(e) => setOpenaiInput(e.target.value)}
+              value={jarvisInput}
+              onChange={(e) => setJarvisInput(e.target.value)}
               placeholder="sk-proj-..."
               autoComplete="off"
             />
             <Button
-              onClick={() => save({ openaiApiKey: openaiInput })}
-              disabled={saving || !openaiInput.trim()}
+              onClick={() => save({ jarvisOpenaiKey: jarvisInput })}
+              disabled={saving || !jarvisInput.trim()}
             >
               Save
             </Button>
-            {status?.openai.source === "db" && (
+            {status?.jarvis.source === "db" && (
               <Button
                 variant="outline"
-                onClick={() => save({ openaiApiKey: "" })}
-                disabled={saving}
-              >
-                Clear
-              </Button>
-            )}
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* Anthropic */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <Label>Anthropic API Key</Label>
-            <div className="text-sm">{status ? describe(status.anthropic) : "Loading..."}</div>
-          </div>
-          <div className="flex gap-2">
-            <Input
-              type="password"
-              value={anthropicInput}
-              onChange={(e) => setAnthropicInput(e.target.value)}
-              placeholder="sk-ant-..."
-              autoComplete="off"
-            />
-            <Button
-              onClick={() => save({ anthropicApiKey: anthropicInput })}
-              disabled={saving || !anthropicInput.trim()}
-            >
-              Save
-            </Button>
-            {status?.anthropic.source === "db" && (
-              <Button
-                variant="outline"
-                onClick={() => save({ anthropicApiKey: "" })}
+                onClick={() => save({ jarvisOpenaiKey: "" })}
                 disabled={saving}
               >
                 Clear
@@ -734,20 +719,59 @@ function AiSection() {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            If both keys are set, Anthropic is used (matches the existing fallback order).
+            Used by /api/ai/command, /api/ai/digest, /api/ai/jarvis, project briefs, scheduling,
+            Telegram replies. Env fallback: <code>OPENAI_API_KEY_JARVIS</code>.
           </p>
         </div>
 
         <Separator />
 
-        {/* Model override */}
+        {/* Audit (Anthropic) */}
         <div className="space-y-2">
-          <Label>Model</Label>
+          <div className="flex items-center justify-between gap-3">
+            <Label>Audit Anthropic Key</Label>
+            <div className="text-sm">{status ? describe(status.audit) : "Loading..."}</div>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              value={auditInput}
+              onChange={(e) => setAuditInput(e.target.value)}
+              placeholder="sk-ant-..."
+              autoComplete="off"
+            />
+            <Button
+              onClick={() => save({ auditAnthropicKey: auditInput })}
+              disabled={saving || !auditInput.trim()}
+            >
+              Save
+            </Button>
+            {status?.audit.source === "db" && (
+              <Button
+                variant="outline"
+                onClick={() => save({ auditAnthropicKey: "" })}
+                disabled={saving}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Used by the Marketing audit pipeline (claude-guard) — Haiku for verdicts, Sonnet for
+            weekly summaries. Env fallback: <code>ANTHROPIC_API_KEY_AUDIT</code>.
+          </p>
+        </div>
+
+        <Separator />
+
+        {/* Jarvis model override */}
+        <div className="space-y-2">
+          <Label>Jarvis Model</Label>
           <div className="flex gap-2">
             <Input
               value={modelInput}
               onChange={(e) => setModelInput(e.target.value)}
-              placeholder="e.g. gpt-4o-mini, claude-sonnet-4-6"
+              placeholder="e.g. gpt-4o-mini, gpt-4o, gpt-5"
             />
             <Button
               onClick={() => save({ model: modelInput })}
@@ -757,8 +781,11 @@ function AiSection() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Defaults: <code className="font-mono">claude-sonnet-4-6</code> for Anthropic,{" "}
-            <code className="font-mono">gpt-4o-mini</code> for OpenAI.
+            OpenAI model id used by Jarvis. Default:{" "}
+            <code className="font-mono">gpt-4o-mini</code>. Audit uses fixed Anthropic models
+            (haiku for verdicts, sonnet for summaries) — overridable via{" "}
+            <code className="font-mono">JARVIS_GUARD_MODEL</code> /{" "}
+            <code className="font-mono">JARVIS_SUMMARY_MODEL</code> env vars.
           </p>
         </div>
 

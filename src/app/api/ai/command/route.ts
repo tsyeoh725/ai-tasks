@@ -2,7 +2,8 @@ import { db } from "@/db";
 import { aiConversations, aiMessages, projects, teamMembers, userPreferences, timeBlocks } from "@/db/schema";
 import { eq, and, gte, lte } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
-import { getModel } from "@/lib/ai";
+import { getJarvisModel } from "@/lib/ai";
+import { fromAiSdkUsage, recordAiUsage } from "@/lib/ai-usage";
 import { getCommandTools } from "@/lib/ai-tools";
 import { getTeammate } from "@/lib/ai-teammates";
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage, type UIMessagePart, type UIDataTypes, type UITools } from "ai";
@@ -149,7 +150,7 @@ Ad health signals trigger automatic task creation (creative fatigue → "Need ne
       ? `${teammate.systemPrompt}\n\n${userContext}`
       : defaultSystemPrompt;
 
-    const model = await getModel();
+    const { model, modelId } = await getJarvisModel();
     const allTools = getCommandTools(user.id!);
     const tools = teammate?.toolAllowlist
       ? Object.fromEntries(
@@ -175,13 +176,14 @@ Ad health signals trigger automatic task creation (creative fatigue → "Need ne
       });
     }
 
+    const startedAt = Date.now();
     const result = streamText({
       model,
       system: systemPrompt,
       messages: modelMessages,
       tools,
       stopWhen: stepCountIs(5),
-      async onFinish({ text }) {
+      async onFinish({ text, usage, finishReason }) {
         // Save assistant message
         if (text) {
           await db.insert(aiMessages).values({
@@ -195,6 +197,34 @@ Ad health signals trigger automatic task creation (creative fatigue → "Need ne
         await db.update(aiConversations)
           .set({ updatedAt: new Date() })
           .where(eq(aiConversations.id, convId));
+
+        await recordAiUsage({
+          feature: "jarvis",
+          callSite: "/api/ai/command",
+          provider: "openai",
+          model: modelId,
+          userId: user.id,
+          conversationId: convId,
+          ...fromAiSdkUsage(usage),
+          latencyMs: Date.now() - startedAt,
+          status: finishReason === "error" ? "error" : "success",
+        });
+      },
+      onError({ error }) {
+        console.error("[ai] command streamText error:", error);
+        const msg = error instanceof Error ? error.message : String(error);
+        const status = /rate.?limit|429/i.test(msg) ? "rate_limited" : "error";
+        void recordAiUsage({
+          feature: "jarvis",
+          callSite: "/api/ai/command",
+          provider: "openai",
+          model: modelId,
+          userId: user.id,
+          conversationId: convId,
+          latencyMs: Date.now() - startedAt,
+          status,
+          errorMessage: msg,
+        });
       },
     });
 

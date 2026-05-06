@@ -147,6 +147,7 @@ export async function evaluateRules(
             const summary = await generateAiResponse(
               "You are a concise summariser. Produce a 2-4 sentence summary of the conversation on a task. Focus on decisions, open questions, and next steps. No preamble.",
               `Task: ${task.title}\nDescription: ${task.description || "(none)"}\n\nComments:\n${commentText || "(no comments)"}`,
+              { callSite: "lib.automation.ai_summarise" },
             );
 
             await db.insert(taskComments).values({
@@ -168,6 +169,7 @@ export async function evaluateRules(
             const response = await generateAiResponse(
               'You are a triage assistant. Infer the priority of a task from its title and description. Return ONLY one word from: low, medium, high, urgent. No punctuation or explanation.',
               `Title: ${task.title}\nDescription: ${task.description || "(none)"}`,
+              { callSite: "lib.automation.ai_triage" },
             );
 
             const raw = response.trim().toLowerCase();
@@ -194,6 +196,7 @@ export async function evaluateRules(
             const response = await generateAiResponse(
               'You are an editor. Rewrite a task title and description to be clearer and more actionable. Return ONLY valid JSON like { "title": "...", "description": "..." }. Preserve intent; do not invent new information.',
               `Current title: ${task.title}\nCurrent description: ${task.description || "(none)"}`,
+              { callSite: "lib.automation.ai_rewrite" },
             );
 
             const jsonMatch = response.match(/\{[\s\S]*\}/);

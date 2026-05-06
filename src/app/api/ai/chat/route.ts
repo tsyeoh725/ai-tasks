@@ -106,6 +106,8 @@ Current task context:
   try {
     let captured: unknown = null;
     const result = await streamAiResponse(systemPrompt, message, {
+      callSite: "/api/ai/chat",
+      userId: user.id,
       onError: (e) => {
         captured = e;
       },

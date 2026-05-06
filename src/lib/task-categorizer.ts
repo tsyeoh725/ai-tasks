@@ -52,7 +52,9 @@ export async function categorizeTasks(
   const userPrompt = `Categorize these tasks:\n\n${JSON.stringify(taskSummaries, null, 2)}`;
 
   try {
-    const response = await generateAiResponse(CATEGORY_SYSTEM_PROMPT, userPrompt);
+    const response = await generateAiResponse(CATEGORY_SYSTEM_PROMPT, userPrompt, {
+      callSite: "lib.task-categorizer.categorizeTasks",
+    });
 
     const jsonMatch = response.match(/\[[\s\S]*\]/);
     if (!jsonMatch) {

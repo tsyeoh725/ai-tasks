@@ -105,7 +105,10 @@ Stakeholders: ${stakeholderList}
 Write the brief.`;
 
   try {
-    const content = await generateAiResponse(systemPrompt, userMessage);
+    const content = await generateAiResponse(systemPrompt, userMessage, {
+      callSite: "/api/projects/[id]/ai-brief",
+      userId: user.id,
+    });
     return NextResponse.json({ content });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "AI service error";

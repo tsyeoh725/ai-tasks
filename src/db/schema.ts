@@ -630,6 +630,34 @@ export const aiMessages = sqliteTable("ai_messages", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
+// ============ AI USAGE LOG ============
+// Every successful or failed call to an LLM provider gets one row here.
+// `feature` buckets calls by product surface (Jarvis, Audit, health probes);
+// `callSite` is the route or function name so the admin view can drill in.
+// Token counts come straight from the provider's response — not estimated —
+// so the cost column is reproducible from raw inputs and the pricing table.
+// On user/conversation delete we keep the row (set null) — the historical
+// spend record is the whole point of this table.
+export const aiUsageLog = sqliteTable("ai_usage_log", {
+  id: text("id").primaryKey(),
+  feature: text("feature", { enum: ["jarvis", "audit", "health_check"] }).notNull(),
+  callSite: text("call_site").notNull(),
+  provider: text("provider", { enum: ["anthropic", "openai"] }).notNull(),
+  model: text("model").notNull(),
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+  conversationId: text("conversation_id").references(() => aiConversations.id, { onDelete: "set null" }),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cacheCreationTokens: integer("cache_creation_tokens").notNull().default(0),
+  cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
+  costUsd: real("cost_usd").notNull().default(0),
+  latencyMs: integer("latency_ms"),
+  status: text("status", { enum: ["success", "error", "rate_limited"] }).notNull(),
+  errorMessage: text("error_message"),
+  requestId: text("request_id"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ============ PROJECT MESSAGES ============
 export const projectMessages = sqliteTable("project_messages", {
   id: text("id").primaryKey(),
