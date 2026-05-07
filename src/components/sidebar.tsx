@@ -206,13 +206,23 @@ export function Sidebar() {
       .then((data) => setFavorites(data.favorites || []))
       .catch(() => {});
 
-    fetch("/api/approvals")
-      .then((r) => r.json())
-      .then((data) => {
-        const list = Array.isArray(data) ? data : data.entries || [];
-        setPendingApprovals(list.length);
-      })
-      .catch(() => {});
+    function refetchApprovals() {
+      fetch("/api/approvals")
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.entries || [];
+          setPendingApprovals(list.length);
+        })
+        .catch(() => {});
+    }
+    refetchApprovals();
+
+    // The approvals page dispatches `approvals:changed` after a successful
+    // approve/reject so the sidebar badge stays in sync without a hard reload.
+    // Without this, the count stays "4" forever after the user clears the
+    // queue — same shape as the command-palette event in top-header.
+    window.addEventListener("approvals:changed", refetchApprovals);
+    return () => window.removeEventListener("approvals:changed", refetchApprovals);
     // Re-fetch projects + approvals when the workspace cookie changes — they
     // are workspace-scoped on the server. Teams list is always all-of-mine.
   }, [workspace]);

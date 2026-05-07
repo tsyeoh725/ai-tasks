@@ -335,6 +335,12 @@ export default function ApprovalsPage() {
         delete next[group.key];
         return next;
       });
+      // Sidebar listens for this event and refetches /api/approvals so the
+      // pending-count badge clears as soon as the queue empties — without it
+      // the "4" sticks until a hard reload.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("approvals:changed"));
+      }
     }
 
     setProcessing((prev) => {
