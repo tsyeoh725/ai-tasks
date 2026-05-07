@@ -244,9 +244,17 @@ export async function GET(req: Request) {
     }),
   ]);
 
+  // Parse `config` before returning. Without this, the `config` field is
+  // still a JSON string on the wire and the ads page reads
+  // `brand.config?.thresholds` as undefined → every ad classified as "NO DATA".
+  const brandsWithParsedConfig = userBrands.map((b) => ({
+    ...b,
+    config: brandConfigById.get(b.id) ?? {},
+  }));
+
   return NextResponse.json({
     ads: enriched,
-    brands: userBrands,
+    brands: brandsWithParsedConfig,
     adSets,
     campaigns,
   });
