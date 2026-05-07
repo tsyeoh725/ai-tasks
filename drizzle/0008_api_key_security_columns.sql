@@ -10,5 +10,7 @@
 --                 deleting the row, so we keep an audit trail.
 
 ALTER TABLE `api_keys` ADD COLUMN `salt` text;
+--> statement-breakpoint
 ALTER TABLE `api_keys` ADD COLUMN `expires_at` integer;
+--> statement-breakpoint
 ALTER TABLE `api_keys` ADD COLUMN `revoked_at` integer;
