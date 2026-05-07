@@ -124,15 +124,22 @@ The only platform-level change to existing tables: **add `platform: PlatformId` 
 
 | # | Phase | Files touched | Days | Done |
 |---|---|---|---|---|
-| 0 | Architecture doc | `docs/architecture.md` (this) | 0.5 | ⏳ |
-| 1 | Interface skeletons | `src/lib/ad-platforms/types.ts` (new) | 0.5 | – |
-| 2 | Meta adapter port | `src/lib/ad-platforms/meta/{index,api,sync}.ts` (new); `src/lib/marketing/meta-api.ts` becomes re-export | 3–4 | – |
-| 3 | Credential provider | `src/lib/ad-platforms/credentials/meta-system-user.ts` (new); `src/lib/marketing/meta-token.ts` becomes re-export | 2 | – |
-| 4 | Recommendation generic | `src/lib/marketing/claude-guard.ts` types | 2 | – |
-| 5 | Cron + AI Guard cutover | `core-monitor.ts`, `scheduler.ts`, `action-executor.ts` | 3–4 | – |
-| 6 | Cleanup + verification | Delete dead re-exports, prod cycle on talos | 1–2 | – |
+| 0 | Architecture doc | `docs/architecture.md` (this) | 0.5 | ✅ `6124c86` |
+| 1 | Interface skeletons | `src/lib/ad-platforms/types.ts` (new) | 0.5 | ✅ `061a3b4` |
+| 2a | Move `meta-api.ts` → `ad-platforms/meta/api.ts` | re-export shim | 0.5 | ✅ `f384bf0` |
+| 2b | Move `sync.ts` → `ad-platforms/meta/sync.ts` | re-export shim | 0.5 | ✅ `87b8db4` |
+| 2c | `metaAdapter` implements `AdPlatform` | `meta/index.ts` (new) + types reconciled | 1 | ✅ `dd8ef44` |
+| 3 | Credential provider | `credentials/meta-system-user.ts` (new); `meta-token.ts` becomes re-export | 1 | ✅ `8a0dbdc` |
+| 4 | `platform: PlatformId` field on `Recommendation` | `claude-guard.ts`, `core-monitor.ts`, `action-executor.ts` | 0.5 | ✅ `244fe55` |
+| 5a | Registry — `getAdPlatform`, `getCredentialProvider`, `buildPlatformContext` | `registry.ts` (new) | 0.5 | ✅ `8ae63ae` |
+| 5b | `action-executor` write path through adapter | `action-executor.ts` | 1 | ✅ `2c7d665` |
+| 5c | Sync-flow callers (`automation-runner`, sync routes) | 3 files | 1 | ✅ `470ebfd` |
+| 6a | Remaining shim callers (health, test-meta, meta-ads/action, ai-tools) | 4 files | 0.5 | ✅ `6b8de4c` |
+| 6b | Delete shims + finalise this doc | 3 deletions + this doc | 0.5 | ✅ |
 
-Each phase is **its own commit and prod deploy**. System stays runnable throughout. No long-lived refactor branch.
+Each phase committed to `main` with `tsc --noEmit` clean. System stayed runnable throughout. No long-lived refactor branch.
+
+**Net diff:** ~10 commits; ~1300 lines added, ~600 lines moved/restructured. Functional behaviour unchanged — every Meta call still ends up in the same `meta/api.ts` / `meta/sync.ts` functions, just routed through `AdPlatform` + `CredentialProvider`.
 
 ---
 
@@ -182,6 +189,27 @@ These were on the senior-engineer list but are deferred to keep the refactor foc
 | Add TikTok Ads | full rewrite | 1 wk |
 | Force BP-required onboarding | 0.5 wk (UI) | same — orthogonal |
 | Per-platform AI Guard prompts | 2 wks (untangle Meta from prompt) | 0 — already split |
+
+### How to add a second platform (recipe)
+
+1. Implement `AdPlatform` at `src/lib/ad-platforms/<platform>/index.ts` (use `meta/index.ts` as the reference).
+2. Implement at least one `CredentialProvider` at `src/lib/ad-platforms/credentials/<platform>-<auth-mode>.ts`.
+3. Register both in `src/lib/ad-platforms/registry.ts` under the new `PlatformId`.
+4. Add the platform's tables to `src/db/schema.ts` (e.g. `google_campaigns`, `google_ads`). Adapter calls these directly — there is **no shared `ad_campaigns` table**.
+5. Extend the `PlatformId` union in `types.ts`.
+6. Add platform-specific fields to `BrandSummary` in `types.ts` if needed (e.g. `googleCustomerId`).
+7. Wire onboarding UI to set the new credential + brand fields.
+
+No changes to `core-monitor`, `claude-guard`, `action-executor`, `automation-runner`, or any sync route. The dispatch flows automatically.
+
+### How to add a second credential mode for Meta (recipe)
+
+For Plan B (HTTP MCP + OAuth) without changing the adapter:
+
+1. Implement a new `CredentialProvider` at `src/lib/ad-platforms/credentials/meta-oauth.ts` that returns `{ kind: "oauth_refresh", accessToken, refreshToken, expiresAt }`.
+2. Add OAuth flow + refresh token storage (mirror the existing Google OAuth flow).
+3. Decide which provider answers `getCredentialProvider("meta")` — by user preference, by brand setting, or by attempting both with fallback. The registry can return a wrapper provider that picks per-brand.
+4. The `metaAdapter` already handles both `Credential` kinds via `extractToken` — no adapter changes needed.
 
 ---
 
