@@ -5,7 +5,8 @@ import { getSessionUser, unauthorized } from "@/lib/session";
 import { getJarvisModel } from "@/lib/ai";
 import { fromAiSdkUsage, recordAiUsage } from "@/lib/ai-usage";
 import { getCommandTools } from "@/lib/ai-tools";
-import { resolveUserTimezone, formatNowInZone } from "@/lib/datetime";
+import { enforceAiRateLimit, AiRateLimitError } from "@/lib/ai-rate-limit";
+import { resolveUserTimezone, formatNowInZone, startOfDayInZone, endOfDayInZone } from "@/lib/datetime";
 import { getTeammate } from "@/lib/ai-teammates";
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage, type UIMessagePart, type UIDataTypes, type UITools } from "ai";
 import { v4 as uuid } from "uuid";
@@ -25,6 +26,21 @@ export async function POST(req: Request) {
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: "messages array is required" }, { status: 400 });
+    }
+
+    // SL-9: per-user-per-minute / per-day cap. Throws AiRateLimitError;
+    // we catch below and surface as 429 so the UI can show a friendly
+    // "slow down" toast.
+    try {
+      await enforceAiRateLimit(user.id!);
+    } catch (err) {
+      if (err instanceof AiRateLimitError) {
+        return NextResponse.json(
+          { error: err.message, scope: err.scope, cap: err.cap },
+          { status: 429 },
+        );
+      }
+      throw err;
     }
 
     // Determine or create conversation
@@ -86,9 +102,9 @@ export async function POST(req: Request) {
     const userTz = resolveUserTimezone(prefs?.timezone);
     const nowInZone = formatNowInZone(userTz);
 
-    const today = new Date();
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const todayEnd = new Date(todayStart.getTime() + 86400000);
+    // SL-7: midnight in userTz, not server tz.
+    const todayStart = startOfDayInZone(userTz);
+    const todayEnd = endOfDayInZone(userTz);
 
     const todayBlocks = await db.query.timeBlocks.findMany({
       where: and(

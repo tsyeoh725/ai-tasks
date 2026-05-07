@@ -9,7 +9,7 @@ import {
 import { eq, and, or, lt, ne, like, sql, inArray, gte, lte } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { parseDueDate } from "./datetime";
+import { parseDueDate, startOfDayInZone, endOfDayInZone, addDaysInZone } from "./datetime";
 import { getUserPreferences, getFreeSlots, getBlocksForDateRange } from "./time-blocker";
 import { getAccessibleProjectIds } from "@/lib/queries/projects";
 import { getOverdueTasks } from "@/lib/queries/tasks";
@@ -591,9 +591,15 @@ export function getCommandTools(userId: string, userTz: string) {
         date: z.string().optional().describe("Date in YYYY-MM-DD format. Defaults to today."),
       }),
       execute: async ({ date }) => {
-        const targetDate = date ? new Date(date) : new Date();
-        const dayStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
-        const dayEnd = new Date(dayStart.getTime() + 86400000);
+        // SL-7: anchor "today" to the user's wall-clock midnight, not the
+        // server's. For a user in Asia/Kolkata when the server is MYT,
+        // bare new Date(y, m, d) starts "today" 2.5 h late.
+        const targetInstant = date ? parseDueDate(date, userTz) : new Date();
+        if (!targetInstant) {
+          return { error: `Invalid date "${date}". Use YYYY-MM-DD.` };
+        }
+        const dayStart = startOfDayInZone(userTz, targetInstant);
+        const dayEnd = endOfDayInZone(userTz, targetInstant);
 
         const prefs = await getUserPreferences(userId);
         const blocks = await getBlocksForDateRange(userId, dayStart, dayEnd);
@@ -776,12 +782,13 @@ export function getCommandTools(userId: string, userTz: string) {
           orderBy: (t, { asc }) => [asc(t.dueDate)],
         });
 
-        // Calculate available time
+        // Calculate available time. SL-7: walk forward through calendar
+        // days in the user's tz so DST transitions and offset zones don't
+        // skip or duplicate a day.
         let totalFreeMinutes = 0;
-        const today = new Date();
+        const todayStart = startOfDayInZone(userTz);
         for (let i = 0; i < days; i++) {
-          const d = new Date(today);
-          d.setDate(d.getDate() + i);
+          const d = addDaysInZone(userTz, todayStart, i);
           if (d.getDay() === 0 || d.getDay() === 6) continue;
           const freeSlots = await getFreeSlots(userId, d);
           totalFreeMinutes += freeSlots.reduce((sum, s) => sum + Math.round((s.end.getTime() - s.start.getTime()) / 60000), 0);
@@ -796,7 +803,7 @@ export function getCommandTools(userId: string, userTz: string) {
           totalNeededMinutes += est;
 
           if (t.dueDate) {
-            const daysUntilDue = Math.ceil((t.dueDate.getTime() - today.getTime()) / 86400000);
+            const daysUntilDue = Math.ceil((t.dueDate.getTime() - Date.now()) / 86400000);
             if (daysUntilDue < 0) {
               warnings.push({
                 taskId: t.id,
@@ -885,14 +892,16 @@ export function getCommandTools(userId: string, userTz: string) {
         if (!hasAccess) return { error: "Task not accessible" };
 
         const estMinutes = (task.estimatedHours || 1) * 60;
-        const today = new Date();
+        const todayStart = startOfDayInZone(userTz);
         const suggestions: { date: string; freeMinutes: number; fits: boolean }[] = [];
 
-        // Check next 14 days for availability
+        // Check next 14 calendar days (in userTz) for availability. Skip
+        // weekends — getUTCDay matches the wall-clock weekday because
+        // todayStart was wall-clock midnight in userTz.
         for (let i = 1; i <= 14; i++) {
-          const d = new Date(today);
-          d.setDate(d.getDate() + i);
-          if (d.getDay() === 0 || d.getDay() === 6) continue;
+          const d = addDaysInZone(userTz, todayStart, i);
+          const weekday = new Intl.DateTimeFormat("en-US", { timeZone: userTz, weekday: "short" }).format(d);
+          if (weekday === "Sat" || weekday === "Sun") continue;
 
           const freeSlots = await getFreeSlots(userId, d);
           const dayFree = freeSlots.reduce((sum, s) => sum + Math.round((s.end.getTime() - s.start.getTime()) / 60000), 0);

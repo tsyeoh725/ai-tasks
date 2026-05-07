@@ -28,8 +28,9 @@ import {
 import { gte, lte } from "drizzle-orm";
 import { getJarvisModel, isAiConfigured } from "./ai";
 import { fromAiSdkUsage, recordAiUsage } from "./ai-usage";
+import { enforceAiRateLimit } from "./ai-rate-limit";
 import { getCommandTools } from "./ai-tools";
-import { resolveUserTimezone, formatNowInZone } from "./datetime";
+import { resolveUserTimezone, formatNowInZone, startOfDayInZone, endOfDayInZone } from "./datetime";
 
 // Cap how many prior turns we replay to the model. The full history lives in
 // the DB; we just don't want a 90-message thread blowing the prompt budget.
@@ -123,6 +124,10 @@ export async function chatWithJarvis(
 
   const { userId, conversationId, message, transport, responseStyle } = input;
 
+  // SL-9: per-user-per-minute / per-day cap. Throws AiRateLimitError; the
+  // transport (Telegram / web) catches and surfaces the message to the user.
+  await enforceAiRateLimit(userId);
+
   // 1. Fetch user + workspace context (mirrors /api/ai/command). We re-do
   //    this every turn because tasks/schedule change frequently and stale
   //    context produces wrong answers (e.g. "you have no overdue tasks"
@@ -150,9 +155,11 @@ export async function chatWithJarvis(
   const userTz = resolveUserTimezone(prefs?.timezone);
   const nowInZone = formatNowInZone(userTz);
 
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const todayEnd = new Date(todayStart.getTime() + 86400000);
+  // SL-7: "today" starts at wall-clock midnight in the user's tz, not the
+  // server's. Otherwise users in zones offset from MYT see yesterday's or
+  // tomorrow's blocks bleeding into "today's schedule".
+  const todayStart = startOfDayInZone(userTz);
+  const todayEnd = endOfDayInZone(userTz);
 
   const todayBlocks = await db.query.timeBlocks.findMany({
     where: and(

@@ -80,7 +80,7 @@ export function parseDueDate(input: string, userTz: string): Date | null {
  * specific instant, not from a static lookup. Half-hour offsets (India,
  * Newfoundland) and 45-min offsets (Nepal) work the same way.
  */
-function wallClockToUtc(iso: string, tz: string): Date {
+export function wallClockToUtc(iso: string, tz: string): Date {
   const ghost = new Date(`${iso}Z`);
   if (isNaN(ghost.getTime())) return new Date(NaN);
 
@@ -143,6 +143,47 @@ export function resolveUserTimezone(prefsTimezone: string | undefined | null): s
     /* fall through */
   }
   return process.env.JARVIS_DEFAULT_TZ || "UTC";
+}
+
+/**
+ * Returns the UTC Date representing wall-clock midnight in `tz` for the
+ * given instant. SL-7: use this instead of `new Date(d.getFullYear(),
+ * d.getMonth(), d.getDate())` which always uses the *server's* tz —
+ * "today" for a user in Asia/Kolkata starts 2.5 h late when the server
+ * is in MYT.
+ *
+ * Example: when=2026-05-07T03:00:00Z, tz="Asia/Kuala_Lumpur" → that's
+ * 11 AM on the 7th locally → returns 2026-05-06T16:00:00Z (= midnight
+ * Mon May 7 in MYT).
+ */
+export function startOfDayInZone(tz: string, when: Date = new Date()): Date {
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(when);
+  // en-CA outputs "YYYY-MM-DD"
+  return wallClockToUtc(`${ymd}T00:00:00`, tz);
+}
+
+/** Wall-clock midnight + 24h in `tz`. */
+export function endOfDayInZone(tz: string, when: Date = new Date()): Date {
+  return new Date(startOfDayInZone(tz, when).getTime() + 86400_000);
+}
+
+/**
+ * Add `days` calendar days to `when`, anchored to wall-clock midnight in
+ * `tz`. So `addDaysInZone(tz, today, 3)` is exactly 3 calendar days later
+ * in the user's local sense, regardless of DST transitions.
+ */
+export function addDaysInZone(tz: string, when: Date, days: number): Date {
+  const start = startOfDayInZone(tz, when);
+  // Add days as ms — DST will be folded back in by wallClockToUtc when we
+  // re-anchor through it. To stay strictly correct across spring-forward,
+  // re-derive from the resulting calendar date.
+  const shifted = new Date(start.getTime() + days * 86400_000);
+  return startOfDayInZone(tz, shifted);
 }
 
 /**
