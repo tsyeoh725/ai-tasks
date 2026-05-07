@@ -41,3 +41,7 @@ coverage
 # Misc
 .turbo
 .vercel
+
+# Local Claude Code state (project-scoped settings, launch.json, etc).
+# Per-developer; never committed.
+.claude
