@@ -289,6 +289,15 @@ function TelegramSection() {
   async function handleLink() {
     const res = await fetch("/api/telegram/link", { method: "POST" });
     const data = await res.json();
+    if (!res.ok || !data.code) {
+      // Surface failure visibly instead of silently rendering an empty state —
+      // the previous behaviour made it impossible to tell whether the request
+      // had succeeded with a stale code or failed with no code at all.
+      window.alert(
+        `Failed to generate Telegram code: ${data.error ?? `HTTP ${res.status}`}`,
+      );
+      return;
+    }
     setTelegramStatus((prev) => ({ ...prev, code: data.code, botUsername: data.botUsername }));
   }
 
