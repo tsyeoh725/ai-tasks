@@ -7,6 +7,7 @@ import {
   telegramLinks,
   tasks,
   taskComments,
+  aiConversations,
 } from "@/db/schema";
 import { eq, and, ne, lt } from "drizzle-orm";
 import { generateAiResponse } from "@/lib/ai";
@@ -377,7 +378,10 @@ ${task.description ? `Description: ${task.description}` : ""}`;
 
   // /reset — clear the active Jarvis conversation so the next message
   // starts a fresh thread with no memory of earlier turns.
+  // /reset hard — also delete every prior conversation + message for this
+  // user (web + Telegram), satisfying right-to-be-forgotten requests.
   b.command("reset", async (ctx) => {
+    const arg = (ctx.match ?? "").trim().toLowerCase();
     const chatId = ctx.chat.id.toString();
     const link = await db.query.telegramLinks.findFirst({
       where: eq(telegramLinks.telegramChatId, chatId),
@@ -386,10 +390,26 @@ ${task.description ? `Description: ${task.description}` : ""}`;
       await ctx.reply("Account not linked. Visit Settings in the web app to link.");
       return;
     }
+
+    if (arg === "hard") {
+      // Cascade through aiConversations.id → aiMessages.conversationId
+      // (FK with onDelete: cascade) so the messages go too.
+      await db.delete(aiConversations).where(eq(aiConversations.userId, link.userId));
+      await db.update(telegramLinks)
+        .set({ activeConversationId: null })
+        .where(eq(telegramLinks.id, link.id));
+      await ctx.reply(
+        "Hard reset done. All Jarvis history (web + Telegram) for your account has been deleted permanently.",
+      );
+      return;
+    }
+
     await db.update(telegramLinks)
       .set({ activeConversationId: null })
       .where(eq(telegramLinks.id, link.id));
-    await ctx.reply("Memory cleared. Next message starts a fresh conversation.");
+    await ctx.reply(
+      "Memory cleared — next message starts a fresh conversation. Old history is still in the web app; use `/reset hard` to delete it permanently.",
+    );
   });
 
   // /help command
@@ -406,7 +426,8 @@ ${task.description ? `Description: ${task.description}` : ""}`;
       "Commands:\n" +
       "/task <id> <message> – Discuss a specific task by id\n" +
       "/digest – Today's briefing of active tasks\n" +
-      "/reset – Clear conversation memory\n" +
+      "/reset – Clear conversation memory (history kept in web app)\n" +
+      "/reset hard – Permanently delete ALL Jarvis history\n" +
       "/help – This message\n\n" +
       "Memory: I remember the last 20 turns of our chat. Use /reset to start fresh."
     );

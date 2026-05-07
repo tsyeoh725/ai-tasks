@@ -46,17 +46,19 @@ export function parseDueDate(input: string, userTz: string): Date | null {
   // Date-only — anchor to 09:00 user-local so "due Friday" doesn't show up
   // as 8am the previous day in some timezones.
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return wallClockToUtc(
+    const d = wallClockToUtc(
       `${trimmed}T${String(DEFAULT_HOUR_FOR_DATE_ONLY).padStart(2, "0")}:00:00`,
       userTz,
     );
+    return isNaN(d.getTime()) ? null : d;
   }
 
   // Datetime without tz suffix (e.g. "2026-05-07T16:00" or "2026-05-07T16:00:00")
   // — treat as wall-clock in user's tz.
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(trimmed)) {
     const padded = trimmed.length === 16 ? `${trimmed}:00` : trimmed;
-    return wallClockToUtc(padded, userTz);
+    const d = wallClockToUtc(padded, userTz);
+    return isNaN(d.getTime()) ? null : d;
   }
 
   // SL-7: strict mode. The two regexes above accept every shape we want to
