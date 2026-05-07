@@ -580,7 +580,12 @@ export const userPreferences = sqliteTable("user_preferences", {
   lunchStartTime: text("lunch_start_time").notNull().default("12:00"),
   lunchEndTime: text("lunch_end_time").notNull().default("13:00"),
   workEndTime: text("work_end_time").notNull().default("17:00"),
-  timezone: text("timezone").notNull().default("America/New_York"),
+  // Schema default matches the deployment region (MYT). Existing rows that
+  // were created with the prior NY default are NOT auto-migrated — users
+  // can update via Settings → Schedule, or the resolveUserTimezone() helper
+  // treats the legacy default as "unset" so they don't silently get
+  // 12-hour-off task times.
+  timezone: text("timezone").notNull().default("Asia/Kuala_Lumpur"),
   preferredBlockDuration: integer("preferred_block_duration").notNull().default(60),
   focusTimePreference: text("focus_time_preference", { enum: ["morning", "afternoon", "mixed"] }).notNull().default("morning"),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),

@@ -114,19 +114,33 @@ function wallClockToUtc(iso: string, tz: string): Date {
   return new Date(ghost.getTime() + offsetMs);
 }
 
+// Legacy schema default — every userPreferences row created before
+// 2026-05-07 has this even though most users are in MYT. Treating it as
+// unset (instead of trusting it) is a deliberate tradeoff: a genuine NY
+// user gets the wrong tz once and fixes it via Settings → Schedule;
+// silently giving every existing user 12-hour-off task times was worse.
+const LEGACY_SCHEMA_DEFAULT_TZ = "America/New_York";
+
 /**
- * Resolve the timezone string to use for a user. Prefers their saved
- * preference; falls back to the server's runtime tz if unset. Server tz is
- * usually closer to reality than the schema default (America/New_York) for
- * an MY-based product.
+ * Resolve the timezone to use for a user.
+ *
+ * Precedence:
+ *   1. Their saved preference (if non-empty AND not the legacy schema default)
+ *   2. Container's runtime tz via Intl (set via TZ env in the Dockerfile)
+ *   3. JARVIS_DEFAULT_TZ env var (escape hatch for non-Docker deployments)
+ *   4. UTC
  */
 export function resolveUserTimezone(prefsTimezone: string | undefined | null): string {
-  if (prefsTimezone && prefsTimezone.length > 0) return prefsTimezone;
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
+  if (prefsTimezone && prefsTimezone.length > 0 && prefsTimezone !== LEGACY_SCHEMA_DEFAULT_TZ) {
+    return prefsTimezone;
   }
+  try {
+    const containerTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (containerTz && containerTz !== "UTC") return containerTz;
+  } catch {
+    /* fall through */
+  }
+  return process.env.JARVIS_DEFAULT_TZ || "UTC";
 }
 
 /**

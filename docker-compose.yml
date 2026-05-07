@@ -14,6 +14,14 @@ services:
       - "127.0.0.1:3100:3100"   # localhost-only; Cloudflare Tunnel forwards to here
     env_file:
       - .env.production
+    environment:
+      # Container-level timezone. Without this, Node sees UTC inside Docker
+      # and Intl.DateTimeFormat() with no explicit zone returns UTC — which
+      # makes the Jarvis date parser fall back to UTC for users without a
+      # saved timezone preference, storing "5 PM" as 17:00 UTC = 1 AM MYT.
+      # MYT matches the deployment location and the bulk of users;
+      # per-user override still wins via userPreferences.timezone.
+      TZ: Asia/Kuala_Lumpur
     volumes:
       - ./data:/data            # SQLite DB + uploads — survives image swaps
     healthcheck:

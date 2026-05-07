@@ -29,10 +29,20 @@ RUN npm run build
 
 # ---- 3. runner ----
 FROM node:${NODE_VERSION} AS runner
+# tzdata so /usr/share/zoneinfo/* exists. Without it, setting TZ has no
+# effect — the kernel falls back to UTC and Intl.DateTimeFormat() returns
+# UTC inside the container even when a TZ env is provided.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl tini sqlite3 \
+      ca-certificates curl tini sqlite3 tzdata \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
+
+# Default the container to MYT. Without this, Node sees UTC and the Jarvis
+# date parser falls back to UTC for users without a saved timezone — which
+# made "create at 5 PM" land at 1 AM MYT (5 PM UTC = 1 AM MYT). Override
+# via docker compose env_file / environment if deploying to a different
+# region.
+ENV TZ=Asia/Kuala_Lumpur
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
