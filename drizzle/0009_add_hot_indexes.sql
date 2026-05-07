@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS `task_comments_task_idx`   ON `task_comments` (`task_
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `notifications_user_idx`   ON `notifications` (`user_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `notifications_user_read_idx` ON `notifications` (`user_id`, `is_read`);
+CREATE INDEX IF NOT EXISTS `notifications_user_read_idx` ON `notifications` (`user_id`, `read`);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `time_blocks_user_idx`     ON `time_blocks` (`user_id`);
 --> statement-breakpoint
@@ -48,8 +48,6 @@ CREATE INDEX IF NOT EXISTS `time_blocks_task_idx`     ON `time_blocks` (`task_id
 CREATE INDEX IF NOT EXISTS `ai_usage_log_user_created_idx` ON `ai_usage_log` (`user_id`, `created_at`);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `ai_usage_log_created_idx` ON `ai_usage_log` (`created_at`);
---> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `task_activities_task_idx` ON `task_activities` (`task_id`);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `decision_journal_user_idx`    ON `decision_journal` (`user_id`);
 --> statement-breakpoint
