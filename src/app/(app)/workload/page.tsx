@@ -48,10 +48,21 @@ export default function WorkloadPage() {
       .finally(() => setLoading(false));
   }, [selectedTeamId]);
 
-  function capacityColor(total: number) {
-    if (total <= 5) return "bg-green-500";
-    if (total <= 10) return "bg-yellow-500";
-    return "bg-red-500";
+  // F-34: thresholds keyed off percentage of capacity, not absolute task
+  // count. Previously a healthy 5 tasks (~33% fill) showed red because the
+  // bar's color check ignored the bar's own width. The capacity ceiling is
+  // 15 tasks → 100%, so:
+  //   <70%  (≤10 tasks) → green   "comfortable"
+  //   70–95% (11–14)    → amber   "near capacity"
+  //   ≥100% (15+)       → red     "over capacity"
+  const CAPACITY_CEILING = 15;
+  function capacityPercent(total: number): number {
+    return (total / CAPACITY_CEILING) * 100;
+  }
+  function capacityColor(pct: number): string {
+    if (pct >= 100) return "bg-red-500";
+    if (pct >= 70) return "bg-amber-500";
+    return "bg-green-500";
   }
 
   return (
@@ -113,24 +124,39 @@ export default function WorkloadPage() {
                   </div>
                 </div>
 
-                {/* Stacked bar */}
+                {/* F-34: stacked status bar with an inline legend, so the
+                    gray/blue/green segments are self-explanatory instead of
+                    requiring a tooltip hover to decode. */}
                 {barTotal > 0 && (
-                  <div className="flex h-2 rounded-full overflow-hidden bg-muted">
-                    <div
-                      className="bg-gray-400"
-                      style={{ width: `${todoPct}%` }}
-                      title={`Todo: ${member.todoTasks}`}
-                    />
-                    <div
-                      className="bg-blue-500"
-                      style={{ width: `${inProgressPct}%` }}
-                      title={`In Progress: ${member.inProgressTasks}`}
-                    />
-                    <div
-                      className="bg-green-500"
-                      style={{ width: `${donePct}%` }}
-                      title={`Done: ${member.completedTasks}`}
-                    />
+                  <div className="space-y-1.5">
+                    <div className="flex h-2 rounded-full overflow-hidden bg-muted">
+                      <div
+                        className="bg-gray-400"
+                        style={{ width: `${todoPct}%` }}
+                        title={`Todo: ${member.todoTasks}`}
+                      />
+                      <div
+                        className="bg-blue-500"
+                        style={{ width: `${inProgressPct}%` }}
+                        title={`In Progress: ${member.inProgressTasks}`}
+                      />
+                      <div
+                        className="bg-green-500"
+                        style={{ width: `${donePct}%` }}
+                        title={`Done: ${member.completedTasks}`}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-gray-400" /> {member.todoTasks} todo
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500" /> {member.inProgressTasks} in progress
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" /> {member.completedTasks} done
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -148,15 +174,33 @@ export default function WorkloadPage() {
                   )}
                 </div>
 
-                {/* Capacity bar */}
+                {/* F-34: Capacity bar — percentage-based color, with the
+                    fill value and active-task count rendered inline so the
+                    bar communicates load even at a glance. */}
                 <div>
-                  <div className="text-xs text-muted-foreground mb-1">Capacity</div>
-                  <div className="h-3 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${capacityColor(member.totalTasks)}`}
-                      style={{ width: `${Math.min(member.totalTasks * 6.67, 100)}%` }}
-                    />
-                  </div>
+                  {(() => {
+                    const pct = capacityPercent(member.totalTasks);
+                    const fillPct = Math.min(pct, 100);
+                    return (
+                      <>
+                        <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                          <span>Capacity</span>
+                          <span className="tabular-nums">
+                            {member.totalTasks}/{CAPACITY_CEILING} ({Math.round(pct)}%)
+                          </span>
+                        </div>
+                        <div className="relative h-4 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${capacityColor(pct)}`}
+                            style={{ width: `${fillPct}%` }}
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-foreground/80 mix-blend-luminosity">
+                            {member.totalTasks} active
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             );

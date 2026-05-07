@@ -23,6 +23,35 @@ function AiPageInner() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // F-45: inline rename. Auto-titling produces cryptic "first 80 chars of
+  // the prompt" titles that users can't fix. Pencil button → input → blur
+  // or Enter to save, Escape to cancel.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  async function handleRenameConversation(id: string, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setRenamingId(null);
+      return;
+    }
+    // Optimistic update so the sidebar doesn't flicker.
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: trimmed } : c)));
+    setRenamingId(null);
+    try {
+      const res = await fetch(`/api/ai/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!res.ok) {
+        // Roll back on failure by reloading from the server.
+        loadConversations();
+      }
+    } catch {
+      loadConversations();
+    }
+  }
 
   const loadConversations = useCallback(async () => {
     try {
@@ -79,45 +108,96 @@ function AiPageInner() {
 
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-0.5">
-            {conversations.map(conv => (
-              <div key={conv.id} className="group relative">
-                <button
-                  onClick={() => setActiveConvId(conv.id)}
-                  className={cn(
-                    "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
-                    activeConvId === conv.id
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+            {conversations.map(conv => {
+              const isRenaming = renamingId === conv.id;
+              return (
+                <div key={conv.id} className="group relative">
+                  {isRenaming ? (
+                    // F-45: inline rename input. Autofocus so the user can
+                    // start typing immediately. Enter saves, Escape cancels,
+                    // blur saves so a click elsewhere persists the edit.
+                    <div className="px-3 py-2">
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onBlur={() => handleRenameConversation(conv.id, renameDraft)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleRenameConversation(conv.id, renameDraft);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setRenamingId(null);
+                          }
+                        }}
+                        maxLength={200}
+                        className="w-full bg-background border border-input rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Enter to save · Esc to cancel
+                      </p>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setActiveConvId(conv.id)}
+                      className={cn(
+                        "w-full text-left px-3 py-2 rounded-md text-sm transition-colors",
+                        activeConvId === conv.id
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                      )}
+                      type="button"
+                      // F-67: native tooltip on truncated conversation titles so
+                      // the full title is reachable on hover.
+                      title={conv.title}
+                    >
+                      <p className="truncate font-medium pr-10">{conv.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {new Date(conv.updatedAt).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </button>
                   )}
-                  type="button"
-                  // F-67: native tooltip on truncated conversation titles so
-                  // the full title is reachable on hover.
-                  title={conv.title}
-                >
-                  <p className="truncate font-medium">{conv.title}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {new Date(conv.updatedAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteConversation(conv.id);
-                  }}
-                  className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10"
-                  type="button"
-                >
-                  <svg className="h-3.5 w-3.5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
-              </div>
-            ))}
+                  {!isRenaming && (
+                    <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* F-45: rename pencil. */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRenameDraft(conv.title);
+                          setRenamingId(conv.id);
+                        }}
+                        className="p-1 rounded hover:bg-accent"
+                        title="Rename"
+                        type="button"
+                      >
+                        <svg className="h-3.5 w-3.5 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteConversation(conv.id);
+                        }}
+                        className="p-1 rounded hover:bg-destructive/10"
+                        title="Delete"
+                        type="button"
+                      >
+                        <svg className="h-3.5 w-3.5 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             {conversations.length === 0 && (
               <p className="text-xs text-muted-foreground text-center py-8">
                 No conversations yet. Start chatting!

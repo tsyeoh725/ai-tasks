@@ -176,8 +176,13 @@ export function ProjectHeaderEditable({
               className="flex items-center gap-1 hover:bg-gray-100 px-1.5 py-0.5 rounded transition-colors group"
             >
               <Megaphone size={10} className="text-gray-400" />
-              <span className={project.campaign ? "" : "italic text-gray-400"}>
-                {project.campaign || "+ Campaign"}
+              {/* F-38: empty string is truthy under `||` only because we
+                  hadn't checked content. Trim before deciding so a saved
+                  blank doesn't render as the literal value (which then
+                  showed nothing) AND simultaneously masked the "+ Campaign"
+                  affordance. */}
+              <span className={project.campaign?.trim() ? "" : "italic text-gray-400"}>
+                {project.campaign?.trim() || "+ Campaign"}
               </span>
             </button>
           )}
@@ -204,8 +209,9 @@ export function ProjectHeaderEditable({
               className="flex items-center gap-1 hover:bg-gray-100 px-1.5 py-0.5 rounded transition-colors group"
             >
               <Building2 size={10} className="text-gray-400" />
-              <span className={project.category ? "" : "italic text-gray-400"}>
-                {project.category || "+ Client"}
+              {/* F-38: same empty-string trap as `campaign` above. */}
+              <span className={project.category?.trim() ? "" : "italic text-gray-400"}>
+                {project.category?.trim() || "+ Client"}
               </span>
             </button>
           )}

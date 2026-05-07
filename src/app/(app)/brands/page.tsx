@@ -243,18 +243,43 @@ export default function BrandsPage() {
                       RM {brand.config.spendLimit.monthlyLimit.toLocaleString()}/mo
                     </p>
                   )}
+                  {/* F-75: alert pills now carry native tooltips so a
+                      reader who has never opened the brand's config can
+                      tell what each guard does without leaving the page.
+                      title="" works for keyboard focus + hover, no
+                      JS popover needed. */}
                   <div className="mt-3 flex gap-1.5 flex-wrap">
                     {brand.config?.toggles?.killEnabled && (
-                      <Badge variant="destructive">Kill</Badge>
+                      <Badge
+                        variant="destructive"
+                        title="Auto-pause underperforming ads when ROAS drops below threshold."
+                      >
+                        Kill
+                      </Badge>
                     )}
                     {brand.config?.toggles?.budgetEnabled && (
-                      <Badge variant="default">Budget</Badge>
+                      <Badge
+                        variant="default"
+                        title="Auto-adjust daily ad budgets up or down based on yesterday's performance."
+                      >
+                        Budget
+                      </Badge>
                     )}
                     {brand.config?.toggles?.duplicateEnabled && (
-                      <Badge variant="secondary">Duplicate</Badge>
+                      <Badge
+                        variant="secondary"
+                        title="Auto-duplicate winning ads to scale spend on what's working."
+                      >
+                        Duplicate
+                      </Badge>
                     )}
                     {brand.config?.spendLimit?.pauseOnLimit && (
-                      <Badge variant="warning">Spend Cap</Badge>
+                      <Badge
+                        variant="warning"
+                        title="Pause every active ad once the brand's monthly spend limit is reached."
+                      >
+                        Spend Cap
+                      </Badge>
                     )}
                   </div>
                 </CardContent>

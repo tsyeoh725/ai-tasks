@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react";
 import {
-  format,
   isToday,
   isTomorrow,
   isPast,
-  startOfDay,
   addDays,
   subDays,
   differenceInDays,
@@ -14,6 +12,7 @@ import {
   isThisMonth,
   eachDayOfInterval,
 } from "date-fns";
+import { formatInZone, localDayInZone } from "@/lib/datetime";
 import { Button } from "@/components/ui/button";
 import { CreateTaskDialog } from "@/components/create-task-dialog";
 import { TaskDetailPanel } from "@/components/task-detail-panel";
@@ -82,12 +81,17 @@ const priorityChip: Record<string, string> = {
   low: "bg-gray-50 text-gray-500 border border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700",
 };
 
+// F-21: bucket and label dates against the canonical user tz (Asia/Kuala_Lumpur),
+// not the browser's tz. Two views on different machines used to disagree on
+// whether a UTC instant near a day boundary belonged to "today" vs "tomorrow".
 function formatDue(dateStr: string): { label: string; urgent: boolean } {
-  const d = new Date(dateStr);
-  if (isToday(d)) return { label: "Today", urgent: true };
-  if (isTomorrow(d)) return { label: "Tomorrow", urgent: false };
-  if (isPast(d)) return { label: format(d, "MMM d"), urgent: true };
-  return { label: format(d, "MMM d"), urgent: false };
+  const localDay = localDayInZone(dateStr);
+  const todayLocal = localDayInZone(new Date());
+  if (isToday(localDay) || +localDay === +todayLocal) return { label: "Today", urgent: true };
+  if (isTomorrow(localDay)) return { label: "Tomorrow", urgent: false };
+  const label = formatInZone(dateStr, "MMM d");
+  if (isPast(localDay)) return { label, urgent: true };
+  return { label, urgent: false };
 }
 
 function TaskRow({
@@ -336,7 +340,13 @@ function TimelineView({ tasks, onOpenDetail }: {
   tasks: Task[];
   onOpenDetail?: (id: string) => void;
 }) {
-  const today = startOfDay(new Date());
+  // F-21 / F-42: anchor today and the task pips to the user's canonical tz
+  // (Asia/Kuala_Lumpur) so the pip lands on the same calendar day the user
+  // sees in My Tasks. Previously the pip used browser-local startOfDay while
+  // the "Today" marker did the same — but a UTC dueDate near midnight could
+  // land on a different day than the user's local sense of "today",
+  // appearing left of the Today line.
+  const today = localDayInZone(new Date());
   const windowStart = subDays(today, 7);
   const windowEnd = addDays(today, 28);
   const totalDays = differenceInDays(windowEnd, windowStart);
@@ -356,7 +366,7 @@ function TimelineView({ tasks, onOpenDetail }: {
 
   function taskPosition(task: Task): { left: string; visible: boolean } {
     if (!task.dueDate) return { left: "0%", visible: false };
-    const d = startOfDay(new Date(task.dueDate));
+    const d = localDayInZone(task.dueDate);
     const offset = differenceInDays(d, windowStart);
     if (offset < 0 || offset > totalDays) return { left: "0%", visible: false };
     return { left: `${(offset / totalDays) * 100}%`, visible: true };
@@ -374,7 +384,7 @@ function TimelineView({ tasks, onOpenDetail }: {
             const left = `${(offset / totalDays) * 100}%`;
             return (
               <span key={ws.toISOString()} className="absolute text-[11px] text-gray-400 top-1" style={{ left }}>
-                {format(ws, "MMM d")}
+                {formatInZone(ws, "MMM d")}
               </span>
             );
           })}
@@ -384,25 +394,29 @@ function TimelineView({ tasks, onOpenDetail }: {
           </span>
         </div>
 
-        {/* Rows */}
+        {/* F-41: separate the timeline rows (tasks WITH a due date) from
+            the Backlog lane (tasks without one). The old layout dumped
+            "No due date: <title>" as italic plain text into each project
+            row, which read like a debug print. */}
         <div className="space-y-1">
-          {Array.from(byProject.entries()).map(([projectId, group]) => (
-            <div key={projectId}>
-              <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 mb-1 flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: group.color }} />
-                {group.name}
-              </div>
-              {group.tasks.map((task) => {
-                const { left, visible } = taskPosition(task);
-                const isDone = task.status === "done";
-                return (
-                  <div key={task.id} className="relative h-8 flex items-center">
-                    {/* Gridline */}
-                    <div className="absolute inset-0 border-b border-gray-100 dark:border-white/5" />
-                    {/* Today line */}
-                    <div className="absolute top-0 bottom-0 w-px bg-[#99ff33]/40" style={{ left: todayLeft }} />
-
-                    {visible ? (
+          {Array.from(byProject.entries()).map(([projectId, group]) => {
+            const dated = group.tasks.filter((t) => taskPosition(t).visible);
+            if (dated.length === 0) return null;
+            return (
+              <div key={projectId}>
+                <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 mb-1 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: group.color }} />
+                  {group.name}
+                </div>
+                {dated.map((task) => {
+                  const { left } = taskPosition(task);
+                  const isDone = task.status === "done";
+                  return (
+                    <div key={task.id} className="relative h-8 flex items-center">
+                      {/* Gridline */}
+                      <div className="absolute inset-0 border-b border-gray-100 dark:border-white/5" />
+                      {/* Today line */}
+                      <div className="absolute top-0 bottom-0 w-px bg-[#99ff33]/40" style={{ left: todayLeft }} />
                       <button
                         type="button"
                         onClick={() => onOpenDetail?.(task.id)}
@@ -416,21 +430,72 @@ function TimelineView({ tasks, onOpenDetail }: {
                       >
                         <span className="max-w-[120px] truncate">{task.title}</span>
                       </button>
-                    ) : (
-                      <span className="text-[11px] text-gray-400 pl-1 italic">No due date: {task.title}</span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
 
-        {tasks.filter((t) => !t.dueDate).length > 0 && (
-          <p className="mt-3 text-xs text-gray-400 italic">
-            {tasks.filter((t) => !t.dueDate).length} task(s) without due dates are shown inline above.
-          </p>
-        )}
+        {/* F-41: Backlog lane. Tasks without a dueDate live here as dimmed
+            chips grouped by project, so they're still visible (otherwise
+            they'd silently disappear from this view) but can't be confused
+            with scheduled work on the timeline above. */}
+        {(() => {
+          const backlog = tasks.filter((t) => !t.dueDate && t.status !== "done");
+          if (backlog.length === 0) return null;
+          const groupedBacklog = new Map<string, { name: string; color: string; tasks: Task[] }>();
+          backlog.forEach((t) => {
+            const key = t.project?.id ?? "__none__";
+            if (!groupedBacklog.has(key)) {
+              groupedBacklog.set(key, {
+                name: t.project?.name ?? "No Project",
+                color: t.project?.color ?? "#94a3b8",
+                tasks: [],
+              });
+            }
+            groupedBacklog.get(key)!.tasks.push(t);
+          });
+          return (
+            <div className="mt-6 pt-4 border-t border-dashed border-gray-200 dark:border-white/10">
+              <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 mb-2 flex items-center gap-1.5 uppercase tracking-wide">
+                <Circle className="h-3 w-3 text-gray-400" />
+                Backlog · no due date ({backlog.length})
+              </div>
+              <div className="space-y-3">
+                {Array.from(groupedBacklog.entries()).map(([projectId, group]) => (
+                  <div key={projectId}>
+                    <div className="text-[10px] font-medium text-gray-400 mb-1 flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: group.color }} />
+                      {group.name}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {group.tasks.map((task) => (
+                        <button
+                          key={task.id}
+                          type="button"
+                          onClick={() => onOpenDetail?.(task.id)}
+                          title={task.title}
+                          className={cn(
+                            "rounded-md border px-2 py-1 text-[11px] max-w-[180px] truncate text-left transition-colors",
+                            "border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/[0.03]",
+                            "text-gray-600 dark:text-gray-300 hover:border-[#99ff33]/40 hover:bg-[#99ff33]/5"
+                          )}
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className={cn("h-1.5 w-1.5 rounded-full", PRIORITY_BAR_COLOR[task.priority] || "bg-slate-400")} />
+                            <span className="truncate">{task.title}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -449,9 +514,11 @@ const DEADLINE_GROUPS = [
 
 function getDeadlineGroup(task: Task): string {
   if (!task.dueDate) return "none";
-  const d = new Date(task.dueDate);
-  if (isPast(d) && !isToday(d)) return "overdue";
-  if (isToday(d)) return "today";
+  // F-21: bucket against the user's canonical tz day, not the browser's tz.
+  const d = localDayInZone(task.dueDate);
+  const todayLocal = localDayInZone(new Date());
+  if (+d < +todayLocal) return "overdue";
+  if (+d === +todayLocal) return "today";
   if (isThisWeek(d, { weekStartsOn: 1 })) return "week";
   if (isThisMonth(d)) return "month";
   return "later";
@@ -516,9 +583,11 @@ function DeadlineView({ tasks, onToggle, onOpenDetail }: {
 
 function isUrgent(task: Task): boolean {
   if (!task.dueDate) return false;
-  const d = new Date(task.dueDate);
-  const threeDaysFromNow = addDays(new Date(), 3);
-  return isPast(d) || isToday(d) || d <= threeDaysFromNow;
+  // F-21: compare in canonical user tz day-space.
+  const d = +localDayInZone(task.dueDate);
+  const today = +localDayInZone(new Date());
+  const threeDaysFromNow = +addDays(localDayInZone(new Date()), 3);
+  return d <= today || d <= threeDaysFromNow;
 }
 
 function isImportant(task: Task): boolean {
@@ -694,7 +763,10 @@ export default function MyTasksPage() {
     });
   }
 
-  const now = new Date();
+  // F-21: bucket today/overdue/upcoming using the canonical user tz so a UTC
+  // dueDate near midnight lands in the same bucket as it appears in other
+  // views (TimelineView, DeadlineView).
+  const todayLocal = localDayInZone(new Date());
 
   const projectOptions = Array.from(
     new Map(
@@ -708,14 +780,15 @@ export default function MyTasksPage() {
     return true;
   });
 
+  const dayOf = (s: string) => +localDayInZone(s);
   const overdue = filtered.filter(
-    (t) => t.status !== "done" && t.dueDate && new Date(t.dueDate) < now && !isToday(new Date(t.dueDate))
+    (t) => t.status !== "done" && t.dueDate && dayOf(t.dueDate) < +todayLocal
   );
   const dueToday = filtered.filter(
-    (t) => t.status !== "done" && t.dueDate && isToday(new Date(t.dueDate))
+    (t) => t.status !== "done" && t.dueDate && dayOf(t.dueDate) === +todayLocal
   );
   const upcoming = filtered.filter(
-    (t) => t.status !== "done" && (!t.dueDate || (!isToday(new Date(t.dueDate)) && new Date(t.dueDate) >= now))
+    (t) => t.status !== "done" && (!t.dueDate || dayOf(t.dueDate) > +todayLocal)
   );
   const completed = filtered.filter((t) => t.status === "done");
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, type Content } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useRef, useState } from "react";
@@ -113,6 +113,78 @@ function markdownToHtml(md: string): string {
   return html.join("");
 }
 
+// F-63: known node types our StarterKit ships. Anything outside this set
+// (e.g. content saved by an older build that loaded extra extensions, or a
+// hand-edited JSON blob) gets stripped before tiptap sees it. Without this
+// guard, tiptap throws a RangeError ("Unknown node type") and the entire
+// editor fails to mount, taking the surrounding form down with it.
+const KNOWN_NODE_TYPES = new Set([
+  "doc",
+  "paragraph",
+  "text",
+  "heading",
+  "bulletList",
+  "orderedList",
+  "listItem",
+  "blockquote",
+  "codeBlock",
+  "horizontalRule",
+  "hardBreak",
+]);
+const KNOWN_MARK_TYPES = new Set(["bold", "italic", "strike", "code"]);
+
+type TiptapNode = {
+  type?: string;
+  content?: TiptapNode[];
+  text?: string;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+  attrs?: Record<string, unknown>;
+};
+
+// Recursively walk a tiptap doc and drop any node/mark whose type isn't in
+// our known set. Returns null when the node itself is unknown so the parent
+// can splice it out.
+function sanitiseNode(node: TiptapNode): TiptapNode | null {
+  if (!node || typeof node !== "object") return null;
+  if (!node.type || !KNOWN_NODE_TYPES.has(node.type)) return null;
+  const out: TiptapNode = { type: node.type };
+  if (node.attrs) out.attrs = node.attrs;
+  if (typeof node.text === "string") out.text = node.text;
+  if (node.marks) {
+    out.marks = node.marks.filter((m) => m && KNOWN_MARK_TYPES.has(m.type));
+  }
+  if (Array.isArray(node.content)) {
+    out.content = node.content
+      .map(sanitiseNode)
+      .filter((n): n is TiptapNode => n !== null);
+  }
+  return out;
+}
+
+// F-63: parse the saved JSON content defensively. The string can be:
+//   - undefined / "" → editor starts empty
+//   - valid tiptap JSON → sanitise and use
+//   - malformed JSON → fall back to a paragraph carrying the raw text
+//   - valid JSON but containing unknown node types → strip the unknowns
+function parseEditorContent(raw: string): Content {
+  if (!raw) return null;
+  const fallback: Content = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: raw }] }],
+  };
+  try {
+    const parsed = JSON.parse(raw) as TiptapNode;
+    const sanitised = sanitiseNode(parsed);
+    if (sanitised) return sanitised as Content;
+    // Parsed JSON but the root wasn't a known doc — show as plain paragraph.
+    return fallback;
+  } catch {
+    // Not JSON at all — treat as plain text so users still see their content
+    // instead of an empty editor.
+    return fallback;
+  }
+}
+
 export function RichTextEditor({
   content,
   onChange,
@@ -128,7 +200,7 @@ export function RichTextEditor({
       StarterKit,
       Placeholder.configure({ placeholder }),
     ],
-    content: content ? JSON.parse(content) : undefined,
+    content: parseEditorContent(content),
     onUpdate: ({ editor }) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {

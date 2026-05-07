@@ -76,14 +76,17 @@ const OFFICE_LAYOUT = [
   "WWWWWWWWWWWWWWWW",
 ];
 
+// F-27: each color now carries a dark-mode variant so the office grid
+// follows the global theme (previously stuck on amber/yellow regardless
+// of the user's theme setting).
 const FURNITURE_META: Record<string, { emoji: string; color: string; label: string }> = {
-  D: { emoji: "🖥️", color: "bg-amber-100", label: "Desk" },
-  C: { emoji: "💺", color: "bg-amber-50", label: "Chair" },
-  P: { emoji: "🪴", color: "bg-green-50", label: "Plant" },
-  T: { emoji: "📋", color: "bg-blue-50", label: "Meeting table" },
-  S: { emoji: "🛋️", color: "bg-orange-50", label: "Sofa" },
-  F: { emoji: "🧊", color: "bg-cyan-50", label: "Kitchen" },
-  W: { emoji: "", color: "bg-stone-200", label: "" },
+  D: { emoji: "🖥️", color: "bg-amber-100 dark:bg-amber-900/30", label: "Desk" },
+  C: { emoji: "💺", color: "bg-amber-50 dark:bg-amber-900/20", label: "Chair" },
+  P: { emoji: "🪴", color: "bg-green-50 dark:bg-green-900/20", label: "Plant" },
+  T: { emoji: "📋", color: "bg-blue-50 dark:bg-blue-900/20", label: "Meeting table" },
+  S: { emoji: "🛋️", color: "bg-orange-50 dark:bg-orange-900/20", label: "Sofa" },
+  F: { emoji: "🧊", color: "bg-cyan-50 dark:bg-cyan-900/20", label: "Kitchen" },
+  W: { emoji: "", color: "bg-stone-200 dark:bg-stone-800", label: "" },
   ".": { emoji: "", color: "", label: "" },
 };
 
@@ -136,8 +139,8 @@ function OfficeCell({
       className={cn(
         "relative flex items-center justify-center transition-all",
         isWall
-          ? "bg-stone-300/80 ring-1 ring-stone-400"
-          : meta.color || "bg-amber-50/40",
+          ? "bg-stone-300/80 dark:bg-stone-700/80 ring-1 ring-stone-400 dark:ring-stone-600"
+          : meta.color || "bg-amber-50/40 dark:bg-white/5",
         !isWall && !member && "hover:bg-[#99ff33]/15 cursor-pointer",
         isHighlighted && "ring-2 ring-[#99ff33] ring-offset-1 z-10",
       )}
@@ -803,7 +806,7 @@ export default function TeamPage() {
           <div className="h-96 w-96 rounded-2xl bg-gray-100 animate-pulse" />
         ) : (
           <div
-            className="relative inline-block rounded-2xl overflow-hidden shadow-[0_20px_60px_rgb(0_0_0/0.15)] ring-1 ring-gray-300 bg-amber-50"
+            className="relative inline-block rounded-2xl overflow-hidden shadow-[0_20px_60px_rgb(0_0_0/0.15)] ring-1 ring-gray-300 dark:ring-white/10 bg-amber-50 dark:bg-[#0d130d]"
             style={{
               width: GRID_COLS * CELL_SIZE,
               height: GRID_ROWS * CELL_SIZE,

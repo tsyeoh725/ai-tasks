@@ -630,12 +630,13 @@ function MonitorScheduleSection() {
 function AiSection() {
   type Source = "db" | "env" | "legacy_db" | "legacy_env" | "none";
   type ProviderStatus = { configured: boolean; source: Source };
+  // F-36: the API still returns `model` for compat, but it's no longer
+  // surfaced to end users — operators set it via env.
   type Status = { jarvis: ProviderStatus; audit: ProviderStatus; model: string | null };
 
   const [status, setStatus] = useState<Status | null>(null);
   const [jarvisInput, setJarvisInput] = useState("");
   const [auditInput, setAuditInput] = useState("");
-  const [modelInput, setModelInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -644,7 +645,6 @@ function AiSection() {
     if (res.ok) {
       const data = (await res.json()) as Status;
       setStatus(data);
-      setModelInput(data.model ?? "");
     }
   }, []);
 
@@ -678,17 +678,13 @@ function AiSection() {
 
   function describe(s: ProviderStatus) {
     if (!s.configured) return <span className="text-muted-foreground">Not set</span>;
-    // F-10/F-66: never render any portion of the secret (was previously
-    // showing last 4 chars). Source detail is suppressed in production
-    // because it leaks where the key lives (.env vs DB) — only the rough
-    // status is useful for end users.
-    const sourceLabel =
-      s.source === "legacy_db" || s.source === "legacy_env"
-        ? "legacy slot — re-save to migrate"
-        : "Saved";
+    // F-10/F-66/F-36: never render any portion of the secret, and never
+    // expose the storage location (db/env/legacy) — that's an implementation
+    // detail and the prior "legacy slot — re-save to migrate" prompt asked
+    // end users to do internal-migration work.
     return (
       <span className="text-xs text-muted-foreground">
-        ••••••••• <span className="ml-1">({sourceLabel})</span>
+        ••••••••• <span className="ml-1">(Saved)</span>
       </span>
     );
   }
@@ -700,10 +696,12 @@ function AiSection() {
           <div>
             <CardTitle>AI</CardTitle>
             <CardDescription>
-              Separate keys for <strong>Jarvis</strong> (the assistant — uses OpenAI) and{" "}
-              <strong>Audit</strong> (the marketing guard — uses Anthropic). Keeps the spend
-              lines clean. Saved keys are encrypted at rest and override the matching environment
-              variable.
+              {/* F-36: trimmed implementation details (provider attribution,
+                  env-var override behaviour). Users only need to know that
+                  the keys are separate and encrypted at rest. */}
+              Separate keys for the <strong>assistant</strong> and the{" "}
+              <strong>marketing audit</strong> so spend lines stay clean.
+              Saved keys are encrypted at rest.
             </CardDescription>
           </div>
           <Link href="/settings/ai-usage">
@@ -712,10 +710,10 @@ function AiSection() {
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Jarvis (OpenAI) */}
+        {/* Assistant key */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <Label>Jarvis OpenAI Key</Label>
+            <Label>Assistant Key</Label>
             <div className="text-sm">{status ? describe(status.jarvis) : "Loading..."}</div>
           </div>
           <div className="flex gap-2">
@@ -743,16 +741,16 @@ function AiSection() {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Used by the assistant, project briefs, scheduling, and Telegram replies.
+            Powers the in-app assistant, project briefs, scheduling, and Telegram replies.
           </p>
         </div>
 
         <Separator />
 
-        {/* Audit (Anthropic) */}
+        {/* Marketing audit key */}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <Label>Audit Anthropic Key</Label>
+            <Label>Marketing Audit Key</Label>
             <div className="text-sm">{status ? describe(status.audit) : "Loading..."}</div>
           </div>
           <div className="flex gap-2">
@@ -784,28 +782,11 @@ function AiSection() {
           </p>
         </div>
 
-        <Separator />
-
-        {/* Jarvis model override */}
-        <div className="space-y-2">
-          <Label>Jarvis Model</Label>
-          <div className="flex gap-2">
-            <Input
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-              placeholder="e.g. gpt-4o-mini, gpt-4o, gpt-5"
-            />
-            <Button
-              onClick={() => save({ model: modelInput })}
-              disabled={saving || !modelInput.trim() || modelInput === (status?.model ?? "")}
-            >
-              Save
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            OpenAI model id used by Jarvis. Leave blank to use the workspace default.
-          </p>
-        </div>
+        {/* F-36: removed the "Jarvis Model" raw model-id input. Surfacing
+            "gpt-4o-mini, gpt-4o, gpt-5" to end users leaks an implementation
+            detail they can't reason about (and pinning to a specific model
+            is an admin/ops decision, not a per-user one). The override still
+            exists at the API/env layer for operators. */}
 
         {message && <p className="text-sm text-emerald-600">{message}</p>}
       </CardContent>

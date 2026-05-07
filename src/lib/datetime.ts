@@ -188,6 +188,64 @@ export function addDaysInZone(tz: string, when: Date, days: number): Date {
   return startOfDayInZone(tz, shifted);
 }
 
+// F-21 / F-42: canonical user timezone for client-side rendering. The product
+// is operated from Malaysia and every user we know about works in MYT, so
+// formatting dates and bucketing "today / tomorrow / overdue" against this
+// fixed zone gives every view the same answer regardless of the browser's
+// reported tz (people travel, devs run the app on EU CI, the dev container
+// reports UTC, etc.). Server-side parsing already canonicalises through
+// `parseDueDate(input, userTz)` (SL-7); this constant closes the loop on
+// the rendering side.
+export const APP_DEFAULT_TZ = "Asia/Kuala_Lumpur";
+
+/**
+ * Wall-clock midnight (in `tz`) for a given instant, returned as a *naive*
+ * Date whose getYear/getMonth/getDate read as the user's local calendar
+ * date even if the browser's tz differs. Use this for day-bucket maths
+ * (differenceInDays, isToday, eachDayOfInterval) so two views on different
+ * machines agree on which calendar day a UTC instant falls in.
+ */
+export function localDayInZone(when: Date | string, tz: string = APP_DEFAULT_TZ): Date {
+  const d = typeof when === "string" ? new Date(when) : when;
+  if (isNaN(d.getTime())) return new Date(NaN);
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d);
+  // en-CA outputs "YYYY-MM-DD". Construct a local Date at that calendar day
+  // — date-fns operates on local-tz Dates, so a "naive" Date here makes
+  // differenceInDays/eachDayOfInterval behave consistently regardless of
+  // browser tz.
+  const [y, m, dd] = ymd.split("-").map((s) => parseInt(s, 10));
+  return new Date(y, m - 1, dd);
+}
+
+/**
+ * Format an instant in the canonical user zone using a small format set we
+ * actually need on the client. Avoids importing date-fns just to do tz-aware
+ * formatting (date-fns format() doesn't take a tz — it always uses browser
+ * local). Supported tokens: "MMM d", "MMM d, yyyy", "yyyy-MM-dd", "h:mm a".
+ */
+export function formatInZone(when: Date | string, fmt: string, tz: string = APP_DEFAULT_TZ): string {
+  const d = typeof when === "string" ? new Date(when) : when;
+  if (isNaN(d.getTime())) return "";
+  const opts: Intl.DateTimeFormatOptions = { timeZone: tz };
+  switch (fmt) {
+    case "MMM d":
+      opts.month = "short"; opts.day = "numeric"; break;
+    case "MMM d, yyyy":
+      opts.month = "short"; opts.day = "numeric"; opts.year = "numeric"; break;
+    case "yyyy-MM-dd":
+      // Use en-CA which renders as ISO date.
+      return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    case "h:mm a":
+      opts.hour = "numeric"; opts.minute = "2-digit"; opts.hour12 = true; break;
+    default:
+      opts.month = "short"; opts.day = "numeric"; break;
+  }
+  return new Intl.DateTimeFormat("en-US", opts).format(d);
+}
+
 /**
  * Format the current moment as wall-clock in the given tz, suitable for
  * dropping into an AI system prompt so the model can reason about "later",

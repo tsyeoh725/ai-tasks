@@ -63,8 +63,17 @@ export default function LogsPage() {
       const res = await fetch(`/api/marketing/logs?${params.toString()}`);
       const data = await res.json();
       const list: Session[] = Array.isArray(data) ? data : data.sessions || [];
-      setSessions(list);
-      if (list.length > 0) setExpanded(new Set([list[0].id]));
+      // F-62: hide sessions with zero log entries. They were dead rows
+      // (capture failed, or the session row got created but the logs never
+      // landed) cluttering the listing — collapsing them with no content
+      // hidden behind the chevron added noise without surfacing anything
+      // actionable. The session id is still reachable via the Session ID
+      // filter input above if an operator needs to inspect a missing row.
+      const nonEmpty = list.filter(
+        (s) => Array.isArray(s.payload?.logs) && s.payload.logs.length > 0
+      );
+      setSessions(nonEmpty);
+      if (nonEmpty.length > 0) setExpanded(new Set([nonEmpty[0].id]));
     } catch {
       // noop
     }
