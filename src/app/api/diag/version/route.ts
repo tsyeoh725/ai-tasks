@@ -4,7 +4,8 @@
 // container's tz isn't silently UTC when we expect MYT.
 //
 // Public endpoint — does not require auth — but returns no sensitive data.
-// Mounted under /api/_diag/version so it doesn't collide with feature routes.
+// Mounted under /api/diag/version. (Initially tried _diag but Next.js
+// treats underscore-prefixed folders as private/non-routable.)
 
 import { NextResponse } from "next/server";
 import { formatNowInZone, resolveUserTimezone } from "@/lib/datetime";
