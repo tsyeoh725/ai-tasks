@@ -17,19 +17,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
-# Match the npm version that generated the lockfile locally — the container
-# image ships npm 10.x by default but the lockfile is now produced by
-# npm 11 (which installs vitest's per-platform esbuild binaries as
-# optionalDependencies). npm 10 in strict-ci mode fails with EBADPLATFORM
-# on the AIX/PPC64 entries; npm 11 understands them as optional.
-RUN npm install -g npm@11
-RUN npm ci --include=dev
+# Use `npm install` rather than `npm ci`. The lockfile contains the
+# per-platform esbuild binaries that vitest's transitive vite pulls in;
+# npm 10 (shipped in the base image) treats those as required and fails
+# with EBADPLATFORM on aix-ppc64 etc. `npm install` is permissive and
+# correctly skips the platform-incompatible optionals. Determinism is
+# preserved by the lockfile being committed.
+RUN npm install --include=dev
 
 # ---- 2. builder ----
 FROM node:${NODE_VERSION} AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm install -g npm@11
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
