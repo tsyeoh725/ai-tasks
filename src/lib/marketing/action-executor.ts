@@ -290,6 +290,7 @@ export async function executeJournalEntry(
   // The executor runs AFTER the guard, so maturity / recentActions are not
   // re-read here — empty defaults satisfy the type without any behavior change.
   const recommendation: Recommendation = {
+    platform: "meta",
     brandId: entryRow.brandId,
     brandName: brand.name,
     adId: entryRow.adId,

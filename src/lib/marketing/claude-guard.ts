@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { globalSettings } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { fromAnthropicUsage, recordAiUsage, type AiUsageStatus } from "@/lib/ai-usage";
+import type { PlatformId } from "@/lib/ad-platforms/types";
 
 // --- Shared types (mirrored from Jarvis) ---
 
@@ -54,6 +55,14 @@ export interface AdMaturity {
 }
 
 export interface Recommendation {
+  /**
+   * Which ad platform this recommendation targets. Drives executor dispatch
+   * (action-executor reads recommendation.platform to pick the right adapter)
+   * and gives the Decision Journal a cross-platform analytics axis.
+   *
+   * Today only "meta" is wired. Future: "google", "tiktok".
+   */
+  platform: PlatformId;
   brandId: string;
   brandName: string;
   adId: string | null;

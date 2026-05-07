@@ -92,6 +92,7 @@ function evaluateAd(
       ad.ctr > thresholds.ctrMin * 2
     ) {
       return {
+        platform: "meta" as const,
         brandId,
         brandName,
         adId: ad.id,
@@ -114,6 +115,7 @@ function evaluateAd(
       const suffix =
         activeAdsInCampaign <= 1 ? " (downgraded from kill — last active ad in campaign)" : "";
       return {
+        platform: "meta" as const,
         brandId,
         brandName,
         adId: ad.id,
@@ -133,6 +135,7 @@ function evaluateAd(
   if (thresholds.cplMax !== null) {
     if (ad.cpl !== null && ad.cpl > thresholds.cplMax) {
       return {
+        platform: "meta" as const,
         brandId,
         brandName,
         adId: ad.id,
@@ -152,6 +155,7 @@ function evaluateAd(
   if (thresholds.frequencyMax !== null) {
     if (ad.frequency !== null && ad.frequency > thresholds.frequencyMax) {
       return {
+        platform: "meta" as const,
         brandId,
         brandName,
         adId: ad.id,
