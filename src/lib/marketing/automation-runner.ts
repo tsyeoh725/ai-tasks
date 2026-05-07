@@ -2,8 +2,10 @@ import { db } from "@/db";
 import { automationSettings, brands, cycleRuns } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
-import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
+import {
+  buildPlatformContext,
+  getAdPlatform,
+} from "@/lib/ad-platforms/registry";
 import { runMonitorCycleForBrand } from "@/lib/marketing/core-monitor";
 import { flushLogs, log } from "@/lib/marketing/logger";
 
@@ -59,11 +61,22 @@ export async function runAutomationCycleForBrand(
   let syncResult: unknown = null;
   let syncError: string | null = null;
   try {
-    const token = await resolveMetaAccessToken(brand);
-    if (!token) {
+    // buildPlatformContext throws when no credential is configured for the
+    // brand. Treat that as "skipped" (operator hasn't connected Meta) rather
+    // than "failed" (Meta is connected but something blew up mid-call).
+    let ctx;
+    try {
+      ctx = await buildPlatformContext("meta", brandId);
+    } catch (credErr) {
       syncStatus = "skipped";
-      syncError = "No Meta access token configured for this brand";
-    } else {
+      syncError =
+        credErr instanceof Error
+          ? credErr.message
+          : "No Meta access token configured for this brand";
+      ctx = null;
+    }
+
+    if (ctx) {
       const parsed = (() => {
         try {
           return brand.config ? (JSON.parse(brand.config) as Record<string, unknown>) : {};
@@ -75,16 +88,13 @@ export async function runAutomationCycleForBrand(
       const costActionType = costMetric?.actionType || "lead";
       const dateRange = (parsed.insightsDateRange as number | undefined) ?? 7;
 
-      const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, brand.userId, token);
-      const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, brand.userId, token);
-      const insights = await syncAdsWithInsights(
-        brand.metaAccountId,
-        brand.id,
-        brand.userId,
-        token,
-        dateRange,
+      const adapter = getAdPlatform("meta");
+      const campaignCount = await adapter.syncCampaigns(ctx);
+      const adSetCount = await adapter.syncAdSets(ctx);
+      const insights = await adapter.syncAdsWithInsights(ctx, {
+        dateRangeDays: dateRange,
         costActionType,
-      );
+      });
       const summary = {
         campaigns: campaignCount,
         adSets: adSetCount,

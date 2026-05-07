@@ -3,8 +3,10 @@ import { brands } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
-import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
+import {
+  buildPlatformContext,
+  getAdPlatform,
+} from "@/lib/ad-platforms/registry";
 import { canAccessBrand } from "@/lib/brand-access";
 import { flushLogs, log } from "@/lib/marketing/logger";
 import { startJob } from "@/lib/jobs";
@@ -31,11 +33,13 @@ export async function POST(req: Request) {
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   if (!(await canAccessBrand(brand, user.id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const accessToken = await resolveMetaAccessToken(brand);
-  if (!accessToken) {
+  let ctx;
+  try {
+    ctx = await buildPlatformContext("meta", brandId);
+  } catch (err) {
     return NextResponse.json(
       {
-        error: "No Meta access token configured",
+        error: err instanceof Error ? err.message : "No Meta access token configured",
         hint: "Add your Meta Graph API access token under Settings → Meta Ads.",
       },
       { status: 412 },
@@ -73,16 +77,13 @@ export async function POST(req: Request) {
         costActionType,
       });
       try {
-        const campaignCount = await syncCampaigns(brand.metaAccountId, brand.id, user.id, accessToken);
-        const adSetCount = await syncAdSets(brand.metaAccountId, brand.id, user.id, accessToken);
-        const insights = await syncAdsWithInsights(
-          brand.metaAccountId,
-          brand.id,
-          user.id,
-          accessToken,
-          dateRange,
+        const adapter = getAdPlatform("meta");
+        const campaignCount = await adapter.syncCampaigns(ctx);
+        const adSetCount = await adapter.syncAdSets(ctx);
+        const insights = await adapter.syncAdsWithInsights(ctx, {
+          dateRangeDays: dateRange,
           costActionType,
-        );
+        });
         log(
           insights.chunksFailed > 0 ? "warn" : "info",
           "sync",

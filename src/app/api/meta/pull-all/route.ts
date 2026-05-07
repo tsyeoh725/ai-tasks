@@ -4,8 +4,10 @@ import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
-import { syncCampaigns, syncAdSets, syncAdsWithInsights } from "@/lib/marketing/sync";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
+import {
+  buildPlatformContext,
+  getAdPlatform,
+} from "@/lib/ad-platforms/registry";
 import { canAccessBrand } from "@/lib/brand-access";
 
 // POST /api/meta/pull-all  { brandId, months?: number }
@@ -40,11 +42,13 @@ export async function POST(req: Request) {
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   if (!(await canAccessBrand(brand, user.id))) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const accessToken = await resolveMetaAccessToken(brand);
-  if (!accessToken) {
+  let ctx;
+  try {
+    ctx = await buildPlatformContext("meta", brandId);
+  } catch (err) {
     return NextResponse.json(
       {
-        error: "No Meta access token configured",
+        error: err instanceof Error ? err.message : "No Meta access token configured",
         hint: "Add your Meta Graph API access token under Settings → Meta Ads.",
       },
       { status: 412 },
@@ -62,9 +66,6 @@ export async function POST(req: Request) {
   const costActionType = costMetric?.actionType || "lead";
 
   const dateRangeDays = Math.min(months, 36) * 30;
-  const userId = user.id;
-  const accountId = brand.metaAccountId;
-  const internalBrandId = brand.id;
 
   // Tracks whether the underlying controller is still writable. We can lose
   // it from two directions: our own finish() (success/error path), or the
@@ -105,16 +106,13 @@ export async function POST(req: Request) {
       };
 
       try {
-        const campaignCount = await syncCampaigns(accountId, internalBrandId, userId, accessToken);
-        const adSetCount = await syncAdSets(accountId, internalBrandId, userId, accessToken);
+        const adapter = getAdPlatform("meta");
+        const campaignCount = await adapter.syncCampaigns(ctx);
+        const adSetCount = await adapter.syncAdSets(ctx);
 
-        const insights = await syncAdsWithInsights(
-          accountId,
-          internalBrandId,
-          userId,
-          accessToken,
-          dateRangeDays,
-          costActionType,
+        const insights = await adapter.syncAdsWithInsights(
+          ctx,
+          { dateRangeDays, costActionType },
           {
             onPlan: (chunks) =>
               send({
@@ -135,10 +133,10 @@ export async function POST(req: Request) {
 
         await db.insert(marketingAuditLog).values({
           id: uuid(),
-          userId,
+          userId: user.id,
           eventType: "pull_all_historical",
           entityType: "brand",
-          entityId: internalBrandId,
+          entityId: brand.id,
           payload: JSON.stringify({
             months,
             campaignCount,
