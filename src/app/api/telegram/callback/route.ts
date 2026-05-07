@@ -36,7 +36,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const bot = getTelegramBot();
+  const bot = await getTelegramBot();
   if (!bot) {
     return NextResponse.json({ error: "Telegram bot not configured" }, { status: 500 });
   }

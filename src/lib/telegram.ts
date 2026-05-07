@@ -6,6 +6,9 @@ import { generateAiResponse } from "@/lib/ai";
 import { v4 as uuid } from "uuid";
 
 let bot: Bot | null = null;
+// Cache the init promise so concurrent webhook hits during cold start share
+// the same getMe round-trip instead of racing.
+let botInitPromise: Promise<Bot | null> | null = null;
 
 // Pending link codes: code -> userId
 const pendingLinks = new Map<string, string>();
@@ -18,16 +21,26 @@ export function generateLinkCode(userId: string): string {
   return code;
 }
 
-export function getTelegramBot(): Bot | null {
+/**
+ * Returns a fully-initialized grammy Bot, or null if no token is configured.
+ *
+ * grammy's `bot.handleUpdate` requires `bot.init()` to have run at least once
+ * (it caches the bot's identity from getMe). Because we run in webhook mode
+ * — not the polling mode that would call init via `bot.start()` — we have to
+ * trigger init ourselves the first time the bot is requested.
+ */
+export async function getTelegramBot(): Promise<Bot | null> {
   if (bot) return bot;
+  if (botInitPromise) return botInitPromise;
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return null;
 
-  bot = new Bot(token);
+  botInitPromise = (async () => {
+    const b = new Bot(token);
 
   // /start command with linking code
-  bot.command("start", async (ctx) => {
+  b.command("start", async (ctx) => {
     const code = ctx.match?.trim();
 
     if (code && pendingLinks.has(code)) {
@@ -62,7 +75,7 @@ export function getTelegramBot(): Bot | null {
   });
 
   // /task command for AI chat
-  bot.command("task", async (ctx) => {
+  b.command("task", async (ctx) => {
     const chatId = ctx.chat.id.toString();
     const link = await db.query.telegramLinks.findFirst({
       where: eq(telegramLinks.telegramChatId, chatId),
@@ -131,7 +144,7 @@ ${task.description ? `Description: ${task.description}` : ""}`;
   });
 
   // /digest command
-  bot.command("digest", async (ctx) => {
+  b.command("digest", async (ctx) => {
     const chatId = ctx.chat.id.toString();
     const link = await db.query.telegramLinks.findFirst({
       where: eq(telegramLinks.telegramChatId, chatId),
@@ -174,7 +187,7 @@ ${task.description ? `Description: ${task.description}` : ""}`;
   });
 
   // /help command
-  bot.command("help", async (ctx) => {
+  b.command("help", async (ctx) => {
     await ctx.reply(
       "AI Tasks Bot Commands:\n\n" +
       "/task <id> <message> - Discuss a task with AI\n" +
@@ -184,7 +197,23 @@ ${task.description ? `Description: ${task.description}` : ""}`;
     );
   });
 
-  return bot;
+    // Telegram requires us to fetch the bot's identity once before we can
+    // dispatch updates via `handleUpdate`. Without this, every webhook fires
+    // an "Bot not initialized" exception that we swallow, leaving the user
+    // staring at silence.
+    try {
+      await b.init();
+    } catch (err) {
+      console.error("[telegram] bot.init() failed:", err);
+      botInitPromise = null;
+      return null;
+    }
+
+    bot = b;
+    return b;
+  })();
+
+  return botInitPromise;
 }
 
 export interface SendTelegramMessageOptions {
@@ -200,7 +229,7 @@ export async function sendTelegramMessage(
   message: string,
   options: SendTelegramMessageOptions = {},
 ): Promise<boolean> {
-  const b = getTelegramBot();
+  const b = await getTelegramBot();
   if (!b) return false;
 
   const link = await db.query.telegramLinks.findFirst({
@@ -245,15 +274,7 @@ export async function sendApprovalPrompt(
   return sendTelegramMessage(userId, text, { parseMode: "HTML", replyMarkup: keyboard });
 }
 
-// Start the bot (call once at server startup)
-export async function startTelegramBot() {
-  const b = getTelegramBot();
-  if (!b) return;
-
-  try {
-    await b.start();
-    console.log("Telegram bot started");
-  } catch (err) {
-    console.error("Failed to start Telegram bot:", err);
-  }
-}
+// startTelegramBot() removed: we run in webhook mode (Telegram POSTs to
+// /api/telegram/callback). Polling and webhook are mutually exclusive at the
+// Telegram API level. Initialization now happens on first use inside
+// getTelegramBot() — no separate boot step required.
