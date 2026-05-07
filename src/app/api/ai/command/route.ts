@@ -5,6 +5,7 @@ import { getSessionUser, unauthorized } from "@/lib/session";
 import { getJarvisModel } from "@/lib/ai";
 import { fromAiSdkUsage, recordAiUsage } from "@/lib/ai-usage";
 import { getCommandTools } from "@/lib/ai-tools";
+import { resolveUserTimezone, formatNowInZone } from "@/lib/datetime";
 import { getTeammate } from "@/lib/ai-teammates";
 import { streamText, convertToModelMessages, stepCountIs, type UIMessage, type UIMessagePart, type UIDataTypes, type UITools } from "ai";
 import { v4 as uuid } from "uuid";
@@ -82,6 +83,8 @@ export async function POST(req: Request) {
     const workHoursInfo = prefs
       ? `Work hours: ${prefs.workStartTime}-${prefs.workEndTime}, Lunch: ${prefs.lunchStartTime}-${prefs.lunchEndTime}, Focus preference: ${prefs.focusTimePreference}`
       : "Work hours: not configured (defaults: 09:00-17:00)";
+    const userTz = resolveUserTimezone(prefs?.timezone);
+    const nowInZone = formatNowInZone(userTz);
 
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -105,7 +108,8 @@ User's teams: ${userTeams.length > 0 ? userTeams.map(t => `${t.team.name} (${t.t
 User's projects: ${userProjects.length > 0 ? userProjects.map(p => `${p.name} (${p.id})`).join(", ") : "None"}
 ${workHoursInfo}
 ${scheduleSummary}
-Today's date is ${new Date().toISOString().split("T")[0]}.`;
+Current local time: ${nowInZone}.
+Use this timezone (${userTz}) for ALL datetime fields. When the user says "later at 4pm", "tomorrow morning", "EOD" etc, resolve to a concrete ISO datetime in this zone (e.g. "2026-05-07T16:00") and pass that to tools.`;
 
     // Resolve persona (teammate) if provided, else use the general system prompt
     const teammate = typeof teammateId === "string" ? getTeammate(teammateId) : undefined;
@@ -151,7 +155,7 @@ Ad health signals trigger automatic task creation (creative fatigue → "Need ne
       : defaultSystemPrompt;
 
     const { model, modelId } = await getJarvisModel();
-    const allTools = getCommandTools(user.id!);
+    const allTools = getCommandTools(user.id!, userTz);
     const tools = teammate?.toolAllowlist
       ? Object.fromEntries(
           Object.entries(allTools).filter(([k]) => teammate.toolAllowlist!.includes(k)),

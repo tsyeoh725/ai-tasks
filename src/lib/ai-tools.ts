@@ -9,6 +9,7 @@ import {
 import { eq, and, or, lt, ne, like, sql, inArray, gte, lte } from "drizzle-orm";
 import { v4 as uuid } from "uuid";
 import { sendTelegramMessage } from "@/lib/telegram";
+import { parseDueDate } from "./datetime";
 import { getUserPreferences, getFreeSlots, getBlocksForDateRange } from "./time-blocker";
 import { getAccessibleProjectIds } from "@/lib/queries/projects";
 import { getOverdueTasks } from "@/lib/queries/tasks";
@@ -19,8 +20,13 @@ import { brandsAccessibleWhere, canAccessBrand } from "@/lib/brand-access";
 /**
  * Returns AI SDK v6 tools scoped to the given user.
  * Each tool validates access through the userId closure.
+ *
+ * `userTz` is the IANA timezone the user works in (e.g. "Asia/Kuala_Lumpur").
+ * Tools that accept user-supplied datetimes interpret bare strings as
+ * wall-clock in this zone — without it, "create at 4pm" was being parsed
+ * as UTC and showing up as 8am or 12am in local time.
  */
-export function getCommandTools(userId: string) {
+export function getCommandTools(userId: string, userTz: string) {
   return {
     createTask: tool({
       description: "Create a new task in a project. You must know the projectId. Ask the user which project if unclear.",
@@ -30,7 +36,12 @@ export function getCommandTools(userId: string) {
         description: z.string().optional().describe("Task description"),
         priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
         status: z.enum(["todo", "in_progress", "done", "blocked"]).default("todo"),
-        dueDate: z.string().optional().describe("Due date in YYYY-MM-DD format"),
+        dueDate: z.string().optional().describe(
+          "Due date with optional time. Accepts YYYY-MM-DD (defaults to 09:00 user-local), " +
+          "or ISO 8601 like '2026-05-07T16:00' (interpreted as user's local time), " +
+          "or with offset like '2026-05-07T16:00:00+08:00'. " +
+          "ALWAYS include time when the user mentions one — e.g. 'at 4pm' → T16:00."
+        ),
         assigneeId: z.string().optional().describe("User ID to assign the task to"),
       }),
       execute: async ({ title, projectId, description, priority, status, dueDate, assigneeId }) => {
@@ -52,6 +63,18 @@ export function getCommandTools(userId: string) {
             if (!assignee) return { error: `Assignee not found with ID: ${assigneeId}. Use searchUsers to find the correct user ID.` };
           }
 
+          // Parse due date as wall-clock in user's tz so "later at 4pm" lands
+          // at 16:00 their time, not UTC midnight (which displayed as 8am MYT
+          // before this fix). null `parsedDue` means the input was malformed
+          // — fail loud so the model can retry with a corrected string.
+          let parsedDue: Date | null = null;
+          if (dueDate) {
+            parsedDue = parseDueDate(dueDate, userTz);
+            if (!parsedDue) {
+              return { error: `Invalid dueDate "${dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
+            }
+          }
+
           await db.insert(tasks).values({
             id,
             title,
@@ -61,7 +84,7 @@ export function getCommandTools(userId: string) {
             projectId,
             createdById: userId,
             assigneeId: assigneeId || null,
-            dueDate: dueDate ? new Date(dueDate) : null,
+            dueDate: parsedDue,
           });
 
           return { success: true, taskId: id, title, project: project.name };
@@ -79,7 +102,11 @@ export function getCommandTools(userId: string) {
         description: z.string().optional(),
         status: z.enum(["todo", "in_progress", "done", "blocked"]).optional(),
         priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
-        dueDate: z.string().optional().describe("Due date in YYYY-MM-DD format, or 'clear' to remove"),
+        dueDate: z.string().optional().describe(
+          "Due date with optional time. Accepts YYYY-MM-DD, ISO 8601 like " +
+          "'2026-05-07T16:00' (user-local), or 'clear' to remove. " +
+          "Include time when user mentions one ('at 4pm' → T16:00)."
+        ),
         assigneeId: z.string().optional().describe("User ID to assign, or 'clear' to unassign"),
       }),
       execute: async ({ taskId, ...updates }) => {
@@ -101,7 +128,11 @@ export function getCommandTools(userId: string) {
         }
         if (updates.priority) setValues.priority = updates.priority;
         if (updates.dueDate === "clear") setValues.dueDate = null;
-        else if (updates.dueDate) setValues.dueDate = new Date(updates.dueDate);
+        else if (updates.dueDate) {
+          const parsed = parseDueDate(updates.dueDate, userTz);
+          if (!parsed) return { error: `Invalid dueDate "${updates.dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
+          setValues.dueDate = parsed;
+        }
         if (updates.assigneeId === "clear") setValues.assigneeId = null;
         else if (updates.assigneeId) setValues.assigneeId = updates.assigneeId;
 
@@ -563,9 +594,12 @@ export function getCommandTools(userId: string) {
         const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
         if (!task) return { error: "Task not found" };
 
-        const [h, m] = startTime.split(":").map(Number);
-        const start = new Date(date);
-        start.setHours(h, m, 0, 0);
+        // Combine date+time and parse as wall-clock in user's tz so blocks
+        // land at the user's intended hour regardless of server tz.
+        const start = parseDueDate(`${date}T${startTime}`, userTz);
+        if (!start) {
+          return { error: `Invalid date/time: "${date}" "${startTime}". Use YYYY-MM-DD and HH:MM.` };
+        }
         const end = new Date(start.getTime() + durationMinutes * 60000);
 
         const blockId = uuid();
@@ -589,7 +623,10 @@ export function getCommandTools(userId: string) {
       description: "Reschedule a task by changing its due date and removing any existing time blocks for it.",
       inputSchema: z.object({
         taskId: z.string().describe("Task ID to reschedule"),
-        newDueDate: z.string().describe("New due date YYYY-MM-DD"),
+        newDueDate: z.string().describe(
+          "New due date. Accepts YYYY-MM-DD or ISO 8601 like '2026-05-07T16:00' " +
+          "(user-local). Include time if the user specifies one."
+        ),
       }),
       execute: async ({ taskId, newDueDate }) => {
         const task = await db.query.tasks.findFirst({
@@ -600,8 +637,13 @@ export function getCommandTools(userId: string) {
 
         const oldDue = task.dueDate ? task.dueDate.toISOString().split("T")[0] : "none";
 
+        const parsedNewDue = parseDueDate(newDueDate, userTz);
+        if (!parsedNewDue) {
+          return { error: `Invalid newDueDate "${newDueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
+        }
+
         await db.update(tasks).set({
-          dueDate: new Date(newDueDate),
+          dueDate: parsedNewDue,
           updatedAt: new Date(),
         }).where(eq(tasks.id, taskId));
 

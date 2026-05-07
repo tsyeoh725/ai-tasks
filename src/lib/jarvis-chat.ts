@@ -29,6 +29,7 @@ import { gte, lte } from "drizzle-orm";
 import { getJarvisModel, isAiConfigured } from "./ai";
 import { fromAiSdkUsage, recordAiUsage } from "./ai-usage";
 import { getCommandTools } from "./ai-tools";
+import { resolveUserTimezone, formatNowInZone } from "./datetime";
 
 // Cap how many prior turns we replay to the model. The full history lives in
 // the DB; we just don't want a 90-message thread blowing the prompt budget.
@@ -146,6 +147,8 @@ export async function chatWithJarvis(
   const workHoursInfo = prefs
     ? `Work hours: ${prefs.workStartTime}-${prefs.workEndTime}, Lunch: ${prefs.lunchStartTime}-${prefs.lunchEndTime}, Focus preference: ${prefs.focusTimePreference}`
     : "Work hours: not configured (defaults: 09:00-17:00)";
+  const userTz = resolveUserTimezone(prefs?.timezone);
+  const nowInZone = formatNowInZone(userTz);
 
   const today = new Date();
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -168,7 +171,8 @@ User's teams: ${userTeams.length > 0 ? userTeams.map(t => `${t.team.name} (${t.t
 User's projects: ${userProjects.length > 0 ? userProjects.map(p => `${p.name} (${p.id})`).join(", ") : "None"}
 ${workHoursInfo}
 ${scheduleSummary}
-Today's date is ${new Date().toISOString().split("T")[0]}.
+Current local time: ${nowInZone}.
+Use this timezone (${userTz}) for ALL datetime fields. When the user says "later at 4pm", "tomorrow morning", "EOD" etc, resolve to a concrete ISO datetime in this zone (e.g. "2026-05-07T16:00") and pass that to tools.
 Chat transport: ${transport}.`;
 
   const transportGuidance = responseStyle
@@ -240,7 +244,7 @@ Marketing Tools (Meta Ads Optimizer):
 
   // 4. Run the model with the full tool surface.
   const { model, modelId } = await getJarvisModel();
-  const tools = getCommandTools(userId);
+  const tools = getCommandTools(userId, userTz);
   const startedAt = Date.now();
   let toolCalls = 0;
   let finishReason: string | null = null;
