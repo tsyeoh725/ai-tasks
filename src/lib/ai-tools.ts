@@ -70,6 +70,7 @@ export function getCommandTools(userId: string, userTz: string) {
           let parsedDue: Date | null = null;
           if (dueDate) {
             parsedDue = parseDueDate(dueDate, userTz);
+            console.log("[ai-tools.createTask] dueDate input:", JSON.stringify(dueDate), "userTz:", userTz, "→ parsed UTC:", parsedDue?.toISOString() ?? "null");
             if (!parsedDue) {
               return { error: `Invalid dueDate "${dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
             }
@@ -87,7 +88,25 @@ export function getCommandTools(userId: string, userTz: string) {
             dueDate: parsedDue,
           });
 
-          return { success: true, taskId: id, title, project: project.name };
+          // Return the stored datetime in user-local tz so the AI's reply
+          // surfaces the actual time, not just the date the user typed.
+          // Without this, the model sometimes echoes "Due: 2026-05-07"
+          // when the row was actually saved with a time — masking bugs.
+          const dueDisplay = parsedDue
+            ? new Intl.DateTimeFormat("en-CA", {
+                timeZone: userTz,
+                year: "numeric", month: "2-digit", day: "2-digit",
+                hour: "2-digit", minute: "2-digit", hour12: false,
+              }).format(parsedDue) + ` (${userTz})`
+            : null;
+          return {
+            success: true,
+            taskId: id,
+            title,
+            project: project.name,
+            dueDate: dueDisplay,
+            dueDateUtc: parsedDue?.toISOString() ?? null,
+          };
         } catch (err: unknown) {
           return { error: `Failed to create task: ${err instanceof Error ? err.message : String(err)}` };
         }
@@ -130,6 +149,7 @@ export function getCommandTools(userId: string, userTz: string) {
         if (updates.dueDate === "clear") setValues.dueDate = null;
         else if (updates.dueDate) {
           const parsed = parseDueDate(updates.dueDate, userTz);
+          console.log("[ai-tools.updateTask] dueDate input:", JSON.stringify(updates.dueDate), "userTz:", userTz, "→ parsed UTC:", parsed?.toISOString() ?? "null");
           if (!parsed) return { error: `Invalid dueDate "${updates.dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
           setValues.dueDate = parsed;
         }
