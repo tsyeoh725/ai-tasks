@@ -1,6 +1,6 @@
 // Test a Meta Marketing API access token by hitting the /me endpoint.
 import { getSessionUser, unauthorized } from "@/lib/session";
-import { testConnection } from "@/lib/marketing/meta-api";
+import { testConnection } from "@/lib/ad-platforms/meta/api";
 import { db } from "@/db";
 import { globalSettings } from "@/db/schema";
 import { and, eq } from "drizzle-orm";

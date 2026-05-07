@@ -3,7 +3,7 @@ import { brands, telegramLinks } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getSessionUser, unauthorized } from "@/lib/session";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
+import { resolveMetaAccessToken } from "@/lib/ad-platforms/credentials/meta-system-user";
 import { resolveWorkspaceForUser } from "@/lib/workspace";
 import { brandsAccessibleWhere } from "@/lib/brand-access";
 import { getAuditAnthropicKey, getJarvisOpenAIKey } from "@/lib/app-config";

@@ -3,9 +3,11 @@ import { brands, metaAds, marketingAuditLog } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { NextResponse } from "next/server";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { v4 as uuid } from "uuid";
-import * as metaApi from "@/lib/marketing/meta-api";
+import {
+  buildPlatformContext,
+  getAdPlatform,
+} from "@/lib/ad-platforms/registry";
 import { canAccessBrand } from "@/lib/brand-access";
 
 // POST /api/meta-ads/action  { adId, action: "pause" | "activate" }
@@ -34,11 +36,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const accessToken = await resolveMetaAccessToken(brand);
-  if (!accessToken) {
+  let ctx;
+  try {
+    ctx = await buildPlatformContext("meta", brand.id);
+  } catch (err) {
     return NextResponse.json(
       {
-        error: "No Meta access token configured",
+        error: err instanceof Error ? err.message : "No Meta access token configured",
         hint: "Add your Meta Graph API access token under Settings → Meta Ads.",
       },
       { status: 412 },
@@ -46,12 +50,13 @@ export async function POST(req: Request) {
   }
 
   const newStatus: "PAUSED" | "ACTIVE" = action === "pause" ? "PAUSED" : "ACTIVE";
+  const adapter = getAdPlatform("meta");
 
   try {
     if (action === "pause") {
-      await metaApi.pauseAd(ad.metaAdId, accessToken);
+      await adapter.pauseAd(ctx, ad.metaAdId);
     } else {
-      await metaApi.activateAd(ad.metaAdId, accessToken);
+      await adapter.activateAd(ctx, ad.metaAdId);
     }
 
     await db.update(metaAds).set({ status: newStatus }).where(eq(metaAds.id, adId));

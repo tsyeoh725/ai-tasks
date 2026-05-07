@@ -941,7 +941,7 @@ export function getCommandTools(userId: string) {
       description: "Pause a specific ad via Meta API.",
       inputSchema: z.object({ adId: z.string() }),
       execute: async ({ adId }) => {
-        const { pauseAd: pauseAdFn } = await import("@/lib/marketing/meta-api");
+        const { pauseAd: pauseAdFn } = await import("@/lib/ad-platforms/meta/api");
         const ad = await db.query.metaAds.findFirst({ where: eq(metaAds.id, adId) });
         if (!ad) return { error: "Ad not found" };
         const brand = await db.query.brands.findFirst({ where: eq(brands.id, ad.brandId) });
@@ -956,7 +956,7 @@ export function getCommandTools(userId: string) {
       description: "Activate a paused ad via Meta API.",
       inputSchema: z.object({ adId: z.string() }),
       execute: async ({ adId }) => {
-        const { activateAd: activateAdFn } = await import("@/lib/marketing/meta-api");
+        const { activateAd: activateAdFn } = await import("@/lib/ad-platforms/meta/api");
         const ad = await db.query.metaAds.findFirst({ where: eq(metaAds.id, adId) });
         if (!ad) return { error: "Ad not found" };
         const brand = await db.query.brands.findFirst({ where: eq(brands.id, ad.brandId) });
