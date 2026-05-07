@@ -70,7 +70,11 @@ export function getCommandTools(userId: string, userTz: string) {
           let parsedDue: Date | null = null;
           if (dueDate) {
             parsedDue = parseDueDate(dueDate, userTz);
-            console.log("[ai-tools.createTask] dueDate input:", JSON.stringify(dueDate), "userTz:", userTz, "→ parsed UTC:", parsedDue?.toISOString() ?? "null");
+            // SL-15: gate behind DEBUG_DATETIME so user-typed task content
+            // doesn't land in default container logs.
+            if (process.env.DEBUG_DATETIME === "true") {
+              console.log("[ai-tools.createTask] dueDate input:", JSON.stringify(dueDate), "userTz:", userTz, "→ parsed UTC:", parsedDue?.toISOString() ?? "null");
+            }
             if (!parsedDue) {
               return { error: `Invalid dueDate "${dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
             }
@@ -149,7 +153,10 @@ export function getCommandTools(userId: string, userTz: string) {
         if (updates.dueDate === "clear") setValues.dueDate = null;
         else if (updates.dueDate) {
           const parsed = parseDueDate(updates.dueDate, userTz);
-          console.log("[ai-tools.updateTask] dueDate input:", JSON.stringify(updates.dueDate), "userTz:", userTz, "→ parsed UTC:", parsed?.toISOString() ?? "null");
+          // SL-15: gate user input logging.
+          if (process.env.DEBUG_DATETIME === "true") {
+            console.log("[ai-tools.updateTask] dueDate input:", JSON.stringify(updates.dueDate), "userTz:", userTz, "→ parsed UTC:", parsed?.toISOString() ?? "null");
+          }
           if (!parsed) return { error: `Invalid dueDate "${updates.dueDate}". Use YYYY-MM-DD or ISO 8601 (e.g. 2026-05-07T16:00).` };
           setValues.dueDate = parsed;
         }

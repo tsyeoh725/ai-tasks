@@ -5,11 +5,15 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { aiUsageLog, users } from "@/db/schema";
 import { and, desc, eq, gte, sql, or } from "drizzle-orm";
-import { getSessionUser, unauthorized } from "@/lib/session";
+import { getSessionUser, unauthorized, forbidden, isAdminUser } from "@/lib/session";
 
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return unauthorized();
+  // SL-1: admin-gate the cross-tenant view. byUser includes per-user spend +
+  // emails for the top 20; recent errors can leak prompt fragments. Without
+  // this gate any logged-in user (including drive-by signups) sees it all.
+  if (!isAdminUser(user)) return forbidden();
 
   const { searchParams } = new URL(req.url);
   const days = Math.max(1, Math.min(365, Number(searchParams.get("days") || 7)));

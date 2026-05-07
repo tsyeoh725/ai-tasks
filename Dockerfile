@@ -76,7 +76,7 @@ USER nextjs
 EXPOSE 3100
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:3100/api/auth/session > /dev/null || exit 1
+    CMD curl -fsS http://localhost:3100/api/diag/health > /dev/null || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

@@ -2,15 +2,20 @@ import { db } from "@/db";
 import { userPreferences } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
+import { resolveUserTimezone } from "@/lib/datetime";
 import { NextResponse } from "next/server";
 import { v4 as uuid } from "uuid";
 
+// SL-7: don't perpetuate the legacy America/New_York default. Falls through
+// to the container TZ (Asia/Kuala_Lumpur baked into Dockerfile) or
+// JARVIS_DEFAULT_TZ → UTC. Computed at module load — safe because container
+// TZ is constant per deploy.
 const DEFAULTS = {
   workStartTime: "09:00",
   lunchStartTime: "12:00",
   lunchEndTime: "13:00",
   workEndTime: "17:00",
-  timezone: "America/New_York",
+  timezone: resolveUserTimezone(undefined),
   preferredBlockDuration: 60,
   focusTimePreference: "morning" as const,
 };

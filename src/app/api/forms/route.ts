@@ -73,7 +73,10 @@ export async function POST(req: Request) {
     projectId,
     title,
     description: description || null,
-    isPublic: isPublic ?? true,
+    // SL-5: opt-in, not opt-out. Public forms are a DoS surface (no rate
+    // limit on /api/forms/*/submit historically). Force the caller to pass
+    // `true` explicitly.
+    isPublic: isPublic === true,
     createdById: user.id,
     createdAt: now,
   });

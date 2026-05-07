@@ -63,6 +63,16 @@ async function runDueCycles() {
 
 export function startSchedulers() {
   if (started) return;
+  // SL-6: refuse to start the in-process scheduler if CRON_SECRET is unset.
+  // Otherwise the safety-net crons fire `x-cron-secret: ""` which the routes
+  // reject (correctly) — silently disabling the cron without any signal that
+  // the deployment is misconfigured.
+  if (!process.env.CRON_SECRET) {
+    console.error(
+      "[cron] FATAL: CRON_SECRET not set — refusing to start in-process schedulers. Set CRON_SECRET in .env.production to enable monitor + weekly + per-brand automation cycles."
+    );
+    return;
+  }
   started = true;
 
   // Per-brand scheduling tick. Default every 5 minutes; brands run when

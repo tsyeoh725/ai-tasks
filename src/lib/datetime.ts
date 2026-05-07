@@ -59,9 +59,11 @@ export function parseDueDate(input: string, userTz: string): Date | null {
     return wallClockToUtc(padded, userTz);
   }
 
-  // Last resort — let JS try. Useful if the model passes some other variant.
-  const d = new Date(trimmed);
-  return isNaN(d.getTime()) ? null : d;
+  // SL-7: strict mode. The two regexes above accept every shape we want to
+  // support. Anything else is malformed — return null so the caller surfaces
+  // a parse error to the model (which retries with a proper format) instead
+  // of silently producing wrong dates via `new Date("June 7")` etc.
+  return null;
 }
 
 /**

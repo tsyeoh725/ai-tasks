@@ -3,12 +3,13 @@
 // for date parsing. Lets us confirm a deploy actually rolled and that the
 // container's tz isn't silently UTC when we expect MYT.
 //
-// Public endpoint — does not require auth — but returns no sensitive data.
-// Mounted under /api/diag/version. (Initially tried _diag but Next.js
-// treats underscore-prefixed folders as private/non-routable.)
+// SL-11: anonymous callers see only `{ buildSha, ok }` — node version and TZ
+// env are admin-only because they're useful for CVE targeting / fingerprinting.
+// Admins (ADMIN_USER_IDS allowlist) get the full payload.
 
 import { NextResponse } from "next/server";
 import { formatNowInZone, resolveUserTimezone } from "@/lib/datetime";
+import { getSessionUser, isAdminUser } from "@/lib/session";
 
 // At build time, GitHub Actions can pass GITHUB_SHA via the Docker build args.
 // At runtime we'll fall back to env vars so a manual run still reports
@@ -20,12 +21,22 @@ const BUILD_SHA =
   "unknown";
 
 export async function GET() {
+  const buildSha = BUILD_SHA.slice(0, 12);
+  const user = await getSessionUser();
+
+  // Anonymous / non-admin: minimum viable payload. Build SHA alone is not
+  // useful for CVE targeting (no node/runtime info attached).
+  if (!isAdminUser(user)) {
+    return NextResponse.json({ ok: true, buildSha });
+  }
+
   const containerTz =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "unknown";
   const fallbackTz = resolveUserTimezone(undefined);
 
   return NextResponse.json({
-    buildSha: BUILD_SHA.slice(0, 12),
+    ok: true,
+    buildSha,
     serverTime: {
       isoUtc: new Date().toISOString(),
       containerTz,
