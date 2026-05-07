@@ -8,7 +8,43 @@ import {
 } from "@/db/schema";
 import { eq, and, ne, lt } from "drizzle-orm";
 import { generateAiResponse } from "@/lib/ai";
+import { chatWithJarvis, getOrCreateJarvisConversation } from "@/lib/jarvis-chat";
 import { v4 as uuid } from "uuid";
+
+// Telegram's hard ceiling per message. The bot API rejects anything longer.
+// Splitting on paragraph boundaries first, then sentence/newline, gives the
+// nicest reading experience; we fall back to a hard slice if a single
+// paragraph is itself too long.
+const TELEGRAM_MAX_MESSAGE_LEN = 4000; // a touch under 4096 to leave headroom
+
+function splitForTelegram(text: string): string[] {
+  if (text.length <= TELEGRAM_MAX_MESSAGE_LEN) return [text];
+
+  const out: string[] = [];
+  let buf = "";
+  // Split on double-newline first (paragraphs), then on single-newline if a
+  // paragraph itself is oversized. Anything still oversized gets a hard slice.
+  for (const para of text.split(/\n\n+/)) {
+    const piece = para + "\n\n";
+    if (buf.length + piece.length <= TELEGRAM_MAX_MESSAGE_LEN) {
+      buf += piece;
+    } else {
+      if (buf) out.push(buf.trimEnd());
+      if (piece.length <= TELEGRAM_MAX_MESSAGE_LEN) {
+        buf = piece;
+      } else {
+        // Oversized paragraph — slice it directly. Loses some readability
+        // but better than dropping the message.
+        for (let i = 0; i < piece.length; i += TELEGRAM_MAX_MESSAGE_LEN) {
+          out.push(piece.slice(i, i + TELEGRAM_MAX_MESSAGE_LEN));
+        }
+        buf = "";
+      }
+    }
+  }
+  if (buf.trim()) out.push(buf.trimEnd());
+  return out;
+}
 
 let bot: Bot | null = null;
 // Cache the init promise so concurrent webhook hits during cold start share
@@ -98,7 +134,16 @@ export async function getTelegramBot(): Promise<Bot | null> {
         });
       }
 
-      await ctx.reply("Successfully linked! You will now receive task notifications here.\n\nCommands:\n/task <id> <message> - Chat with AI about a task\n/digest - Get your daily digest\n/help - Show commands");
+      await ctx.reply(
+        "Successfully linked! You're now talking to Jarvis on Telegram.\n\n" +
+        "Just message me normally — I have full access to your workspace and can:\n" +
+        "• Create / list / complete tasks\n" +
+        "• Summarize your schedule, projects, and ad campaigns\n" +
+        "• Approve or reject ad recommendations\n" +
+        "• Pause / activate Meta ads\n" +
+        "• Send Telegram pings to teammates\n\n" +
+        "I remember the last 20 turns. Send /reset to clear memory, /help for commands.",
+      );
     } else if (code) {
       // User typed a code but it didn't match — distinguish from "no code at
       // all" so they know to generate a new one.
@@ -220,15 +265,40 @@ ${task.description ? `Description: ${task.description}` : ""}`;
     }
   });
 
+  // /reset — clear the active Jarvis conversation so the next message
+  // starts a fresh thread with no memory of earlier turns.
+  b.command("reset", async (ctx) => {
+    const chatId = ctx.chat.id.toString();
+    const link = await db.query.telegramLinks.findFirst({
+      where: eq(telegramLinks.telegramChatId, chatId),
+    });
+    if (!link) {
+      await ctx.reply("Account not linked. Visit Settings in the web app to link.");
+      return;
+    }
+    await db.update(telegramLinks)
+      .set({ activeConversationId: null })
+      .where(eq(telegramLinks.id, link.id));
+    await ctx.reply("Memory cleared. Next message starts a fresh conversation.");
+  });
+
   // /help command
   b.command("help", async (ctx) => {
     await ctx.reply(
-      "AI Tasks Bot Commands:\n\n" +
-      "/task <id> <message> - Discuss a task with AI\n" +
-      "/digest - Get your daily task digest\n" +
-      "/help - Show this help message\n\n" +
-      "Or just send me a message — I'll reply as Jarvis. " +
-      "You can find task IDs in the web app."
+      "Jarvis on Telegram — what I can do:\n\n" +
+      "Just message me normally and I'll respond with full access to your workspace. I can:\n" +
+      "• List, create, update, complete tasks\n" +
+      "• Summarize projects, brands, schedule\n" +
+      "• Approve/reject ad recommendations\n" +
+      "• Pause/activate Meta ads\n" +
+      "• Block time on your calendar\n" +
+      "• Send Telegram pings to teammates\n\n" +
+      "Commands:\n" +
+      "/task <id> <message> – Discuss a specific task by id\n" +
+      "/digest – Today's briefing of active tasks\n" +
+      "/reset – Clear conversation memory\n" +
+      "/help – This message\n\n" +
+      "Memory: I remember the last 20 turns of our chat. Use /reset to start fresh."
     );
   });
 
@@ -268,22 +338,48 @@ ${task.description ? `Description: ${task.description}` : ""}`;
     }
 
     try {
-      const response = await generateAiResponse(
-        "You are Jarvis, the AI assistant inside ai-tasks. You're chatting " +
-        "with the operator over Telegram. Be concise (under 200 words). " +
-        "They have tasks, projects, clients, leads, and Meta ad campaigns " +
-        "in ai-tasks. You can answer questions and reason about their work, " +
-        "but you cannot directly modify data from this chat — for actions, " +
-        "point them to the relevant page in the web app. If they ask for " +
-        "structured workflows, mention the /task <id> and /digest commands.",
-        text,
-        { callSite: "lib.telegram.chat", userId: link.userId },
-      );
-      await ctx.reply(response);
+      // Resolve the active Jarvis conversation for this Telegram link, or
+      // create one. Storing the id on telegramLinks lets follow-up messages
+      // share memory across turns without us hunting through aiConversations.
+      const conv = await getOrCreateJarvisConversation({
+        userId: link.userId,
+        conversationId: link.activeConversationId,
+        label: "Telegram",
+      });
+      // Persist the new conversation id back to the link if it changed
+      // (either created fresh, or stale id rotated). One write per chat
+      // session — not per message.
+      if (conv.isNew || conv.id !== link.activeConversationId) {
+        await db.update(telegramLinks)
+          .set({ activeConversationId: conv.id })
+          .where(eq(telegramLinks.id, link.id));
+      }
+
+      const result = await chatWithJarvis({
+        userId: link.userId,
+        conversationId: conv.id,
+        message: text,
+        transport: "telegram",
+        // Telegram-specific guidance: no markdown (their parser is fussy),
+        // keep replies tight, and surface a follow-up cue when there's more
+        // to explore. The model is free to break this for hard cases.
+        responseStyle:
+          "Telegram chat. Keep responses tight (ideally under 600 chars). " +
+          "Plain text only — no markdown formatting (Telegram's parser is " +
+          "fussy and we send as plain text). Use line breaks and dashes for " +
+          "lists. If a tool returned a long list, summarize the top items " +
+          "and offer to drill in.",
+      });
+
+      // Telegram caps each message at 4096 chars; split long replies into
+      // chunks so users don't lose the tail.
+      for (const chunk of splitForTelegram(result.text)) {
+        await ctx.reply(chunk);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[telegram] chat reply failed:", err);
-      await ctx.reply(`Sorry, I couldn't reach the AI right now. (${msg})`);
+      await ctx.reply(`Sorry, I couldn't reach Jarvis right now. (${msg})`);
     }
   });
 

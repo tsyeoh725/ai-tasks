@@ -349,6 +349,11 @@ export const telegramLinks = sqliteTable("telegram_links", {
   notifyAssignments: integer("notify_assignments", { mode: "boolean" }).notNull().default(true),
   notifyOverdue: integer("notify_overdue", { mode: "boolean" }).notNull().default(true),
   digestTime: text("digest_time").notNull().default("09:00"),
+  // Active Jarvis conversation for this Telegram chat. Lets follow-up
+  // messages share memory across turns. /reset clears it back to null.
+  // No FK at SQL level (see migration 0007) so deleting the conversation
+  // just leaves a stale id; jarvis-chat treats lookup misses as "create new".
+  activeConversationId: text("active_conversation_id"),
 });
 
 // Short-lived codes a user generates from the Settings UI to authorize a
