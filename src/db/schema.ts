@@ -329,12 +329,19 @@ export const customFieldValues = sqliteTable("custom_field_values", {
 });
 
 // ============ API KEYS ============
+// SL-6: per-row salt + HMAC. Legacy rows (created before 0008 migration)
+// have salt=NULL and use the old SHA-256 + global salt scheme. expiresAt
+// and revokedAt enable lifecycle management without deleting audit rows.
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   keyHash: text("key_hash").notNull(),
+  // null → legacy SHA-256 with global API_KEY_SALT; set → HMAC-SHA-256 with this row's salt
+  salt: text("salt"),
   name: text("name").notNull(),
   lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  revokedAt: integer("revoked_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 

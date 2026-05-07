@@ -1,4 +1,5 @@
 import { Bot } from "grammy";
+import { randomBytes } from "crypto";
 import { db } from "@/db";
 import {
   telegramLinkCodes,
@@ -60,20 +61,51 @@ const LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
  * container restart — meaning every deploy left users staring at "Welcome to
  * AI Tasks Bot!" instead of "Successfully linked!". DB-backed codes survive
  * restarts and span multiple processes if we ever scale out.
+ *
+ * SL-6: codes are derived from `crypto.randomBytes`, not Math.random (which
+ * is V8-predictable from a few outputs). The alphabet excludes 0/O/1/I/L
+ * for typing legibility — users dictate these to a Telegram chat.
+ *
+ * SL-14: insert is wrapped in a retry loop in case of unique-key collisions.
+ * Astronomically rare with crypto-random codes (8 chars × 32-symbol alphabet
+ * = 2^40 keyspace, only valid for 10 minutes), but unhandled collisions
+ * previously surfaced as a 500 to the user.
  */
+const LINK_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // skip 0/O/1/I/L for legibility
+const LINK_CODE_LENGTH = 8;
+
+function newLinkCodeString(): string {
+  const bytes = randomBytes(LINK_CODE_LENGTH);
+  let s = "";
+  for (let i = 0; i < LINK_CODE_LENGTH; i++) {
+    s += LINK_CODE_ALPHABET[bytes[i] % LINK_CODE_ALPHABET.length];
+  }
+  return s;
+}
+
 export async function generateLinkCode(userId: string): Promise<string> {
   // Opportunistic GC of expired rows so the table doesn't grow forever.
   // Runs on every code generation — cheap because the index on expires_at
   // makes it a quick range delete.
   await db.delete(telegramLinkCodes).where(lt(telegramLinkCodes.expiresAt, new Date()));
 
-  const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-  await db.insert(telegramLinkCodes).values({
-    code,
-    userId,
-    expiresAt: new Date(Date.now() + LINK_CODE_TTL_MS),
-  });
-  return code;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = newLinkCodeString();
+    try {
+      await db.insert(telegramLinkCodes).values({
+        code,
+        userId,
+        expiresAt: new Date(Date.now() + LINK_CODE_TTL_MS),
+      });
+      return code;
+    } catch (err) {
+      // Unique-constraint violation on the primary key column → regenerate.
+      // Anything else (DB unavailable, schema mismatch, etc.) is fatal —
+      // bail out on the last attempt.
+      if (attempt === 4) throw err;
+    }
+  }
+  throw new Error("unreachable");
 }
 
 /**
