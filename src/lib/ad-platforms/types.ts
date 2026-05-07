@@ -73,6 +73,27 @@ export interface DateRange {
   until: string;
 }
 
+export interface GetAdsOptions {
+  /** How many days back to fetch insights for. Default: 7. */
+  dateRangeDays?: number;
+  /** Which action_type counts as a conversion. Default: "lead". */
+  costActionType?: string;
+}
+
+export interface GetHistoricalOptions {
+  /** How many months back to pull. */
+  months: number;
+  /** Which action_type counts as a conversion. Default: "lead". */
+  costActionType?: string;
+}
+
+/**
+ * Per-day insight row, wire-shape preserved per platform. Adapter callers
+ * either consume immediately or persist as-is. We don't normalise here yet
+ * because no caller forces the issue; revisit when a non-Meta platform ships.
+ */
+export type HistoricalInsightRow = unknown;
+
 /**
  * Platform-agnostic ad record. Concrete adapters map their wire format
  * (Meta's snake_case Graph response, Google's REST shape, etc.) into this.
@@ -101,13 +122,6 @@ export interface AdInsightsSummary {
   /** Cost per lead, or null when leads === 0 */
   cpl: number | null;
 }
-
-/**
- * Per-day historical rows for a single ad. Shape stays platform-shaped for now
- * (we don't have a normalised need yet); Phase 2 may refine when callers force
- * the issue.
- */
-export type HistoricalData = unknown;
 
 // ============================================================================
 // Sync workflow types
@@ -159,8 +173,12 @@ export interface InsightsProgressCallbacks {
  */
 export type ActionKind = "kill" | "pause" | "boost_budget" | "duplicate";
 
-export interface DuplicateOpts {
-  /** Override the new ad's name; defaults to "<original> (copy)". */
+export type CampaignBudgetType = "daily" | "lifetime";
+
+export interface DuplicateAdOptions {
+  /** Required: which ad set the new ad lives under. */
+  targetAdSetId: string;
+  /** Override the new ad's name; defaults vary per platform. */
   copyName?: string;
 }
 
@@ -214,12 +232,14 @@ export interface AdPlatform {
 
   // ---- Reads: fetch live ----
 
-  getAds(ctx: PlatformContext, range: DateRange): Promise<AdRecord[]>;
-  getHistoricalData(
+  getAds(
     ctx: PlatformContext,
-    adId: string,
-    days: number,
-  ): Promise<HistoricalData>;
+    options?: GetAdsOptions,
+  ): Promise<AdRecord[]>;
+  getHistoricalInsights(
+    ctx: PlatformContext,
+    options: GetHistoricalOptions,
+  ): Promise<HistoricalInsightRow[]>;
   testConnection(
     ctx: PlatformContext,
   ): Promise<{ ok: boolean; error?: string }>;
@@ -229,6 +249,8 @@ export interface AdPlatform {
   // Return types are `unknown` on purpose — callers care about success/failure
   // (thrown errors), not response shape. Action executor logs raw responses to
   // marketing_audit_log for forensics; nothing introspects them.
+  //
+  // Budgets are in DOLLARS (not cents). Adapters convert to platform units.
 
   pauseAd(ctx: PlatformContext, adId: string): Promise<unknown>;
   activateAd(ctx: PlatformContext, adId: string): Promise<unknown>;
@@ -240,17 +262,18 @@ export interface AdPlatform {
   updateAdSetBudget(
     ctx: PlatformContext,
     adSetId: string,
-    dailyBudgetCents: number,
+    newDailyBudget: number,
   ): Promise<unknown>;
   updateCampaignBudget(
     ctx: PlatformContext,
     campaignId: string,
-    dailyBudgetCents: number,
+    newBudget: number,
+    type: CampaignBudgetType,
   ): Promise<unknown>;
   duplicateAd(
     ctx: PlatformContext,
     adId: string,
-    opts?: DuplicateOpts,
+    opts: DuplicateAdOptions,
   ): Promise<unknown>;
 
   // ---- Optional capabilities (Phase 2+) ----
