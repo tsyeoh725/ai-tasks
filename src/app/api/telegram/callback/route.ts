@@ -1,11 +1,22 @@
-// Telegram webhook endpoint for inline-keyboard callbacks. Handles the
-// "Approve" / "Reject" buttons on approval prompts sent by sendApprovalPrompt.
+// Telegram webhook endpoint for inline-keyboard callbacks + grammy-handled
+// commands. SL-2: this URL is publicly visible at the Cloudflare Tunnel
+// hostname, so URL secrecy is NOT authentication. Every request is verified
+// against the `X-Telegram-Bot-Api-Secret-Token` header, which Telegram
+// echoes back when the webhook is registered with `secret_token=<value>`:
+//
+//   curl "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+//     --data-urlencode "url=https://task.edgepoint.work/api/telegram/callback" \
+//     --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}"
+//
+// Without this, anyone POSTing forged `update.message` payloads to this URL
+// could trigger the entire Jarvis tool surface on any linked user.
 import { db } from "@/db";
 import { decisionJournal, telegramLinks } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getTelegramBot } from "@/lib/telegram";
 import { executeJournalEntry } from "@/lib/marketing/action-executor";
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "crypto";
 
 interface TelegramCallbackQuery {
   id: string;
@@ -26,7 +37,32 @@ interface TelegramUpdate {
   channel_post?: unknown;
 }
 
+function verifyTelegramSignature(req: Request): true | NextResponse {
+  const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!expected) {
+    // Fail closed: refuse all traffic until the secret is configured. The
+    // Telegram bot will appear silent until ops sets the env var and
+    // re-registers the webhook with secret_token=<value>.
+    console.error(
+      "[telegram] FATAL: TELEGRAM_WEBHOOK_SECRET not set — refusing all webhook traffic. " +
+        "Set the env var, then re-register the webhook with `secret_token=<value>` via setWebhook.",
+    );
+    return NextResponse.json({ error: "misconfigured" }, { status: 503 });
+  }
+  const got = req.headers.get("x-telegram-bot-api-secret-token");
+  const a = Buffer.from(got || "");
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  return true;
+}
+
 export async function POST(req: Request) {
+  // SL-2: verify the request actually came from Telegram before processing.
+  const sig = verifyTelegramSignature(req);
+  if (sig !== true) return sig;
+
   let update: TelegramUpdate;
   let raw: Record<string, unknown>;
   try {
