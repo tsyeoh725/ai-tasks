@@ -227,8 +227,64 @@ ${task.description ? `Description: ${task.description}` : ""}`;
       "/task <id> <message> - Discuss a task with AI\n" +
       "/digest - Get your daily task digest\n" +
       "/help - Show this help message\n\n" +
+      "Or just send me a message — I'll reply as Jarvis. " +
       "You can find task IDs in the web app."
     );
+  });
+
+  // Plain-text catch-all — pipes any non-command message to Jarvis.
+  // Registered AFTER all command handlers so grammy resolves the slash
+  // commands first; this only fires when nothing else matched.
+  b.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+    if (!text) return;
+
+    // Slash-prefix messages that didn't hit a command handler are typos
+    // or unimplemented commands. Don't bill AI tokens on those — let them
+    // pass silently so users notice their typo.
+    if (text.startsWith("/")) return;
+
+    const chatId = ctx.chat.id.toString();
+    const link = await db.query.telegramLinks.findFirst({
+      where: eq(telegramLinks.telegramChatId, chatId),
+    });
+
+    if (!link) {
+      await ctx.reply(
+        "Hi! I can answer once your account is linked. Open the ai-tasks " +
+        "web app, go to Settings → Telegram, and click Link Telegram to " +
+        "get a code.",
+      );
+      return;
+    }
+
+    // Best-effort typing indicator — Telegram shows it for ~5 s, so on
+    // longer AI calls it fades before the reply arrives. Good enough for
+    // v1; we can refresh it if responses regularly run past the window.
+    try {
+      await ctx.replyWithChatAction("typing");
+    } catch {
+      /* non-fatal */
+    }
+
+    try {
+      const response = await generateAiResponse(
+        "You are Jarvis, the AI assistant inside ai-tasks. You're chatting " +
+        "with the operator over Telegram. Be concise (under 200 words). " +
+        "They have tasks, projects, clients, leads, and Meta ad campaigns " +
+        "in ai-tasks. You can answer questions and reason about their work, " +
+        "but you cannot directly modify data from this chat — for actions, " +
+        "point them to the relevant page in the web app. If they ask for " +
+        "structured workflows, mention the /task <id> and /digest commands.",
+        text,
+        { callSite: "lib.telegram.chat", userId: link.userId },
+      );
+      await ctx.reply(response);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("[telegram] chat reply failed:", err);
+      await ctx.reply(`Sorry, I couldn't reach the AI right now. (${msg})`);
+    }
   });
 
     // Telegram requires us to fetch the bot's identity once before we can
