@@ -25,6 +25,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  TILE_METRICS,
+  type TileMetricKey,
+  resolveTileMetrics,
+} from "@/lib/marketing/tile-metrics";
+import { cn } from "@/lib/utils";
 
 type BrandConfig = {
   thresholds: {
@@ -40,6 +46,12 @@ type BrandConfig = {
   preferences: string[];
   insightsDateRange: number;
   costMetric?: { label: string; actionType: string };
+  /**
+   * Up to 4 metric keys (from tile-metrics registry) to render on each ad
+   * tile in the Ads tab. When unset, sensible defaults inferred from the
+   * brand's costMetric.actionType are used.
+   */
+  tileMetrics?: string[];
   spendLimit?: {
     monthlyLimit: number | null;
     dailyLimit: number | null;
@@ -47,6 +59,8 @@ type BrandConfig = {
     pauseOnLimit: boolean;
   };
 };
+
+const MAX_TILE_METRICS = 4;
 
 type Brand = {
   id: string;
@@ -623,6 +637,89 @@ export default function BrandDetailPage({
               className="mt-1.5 font-mono"
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Ads tab tile metrics */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Ads tab tile metrics</CardTitle>
+          <p className="text-xs text-gray-500">
+            Pick up to {MAX_TILE_METRICS} metrics to show on each ad tile in
+            the Ads tab. The order you click is the order they appear.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {(() => {
+            const selected = resolveTileMetrics(
+              config.tileMetrics,
+              config.costMetric?.actionType,
+            );
+            const isExplicit =
+              !!config.tileMetrics && config.tileMetrics.length > 0;
+            const toggle = (key: TileMetricKey) => {
+              const next = (() => {
+                if (selected.includes(key)) {
+                  return selected.filter((k) => k !== key);
+                }
+                if (selected.length >= MAX_TILE_METRICS) return selected;
+                return [...selected, key];
+              })();
+              setConfig({ ...config, tileMetrics: next });
+            };
+            return (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {TILE_METRICS.map((m) => {
+                    const idx = selected.indexOf(m.key);
+                    const active = idx !== -1;
+                    return (
+                      <button
+                        key={m.key}
+                        type="button"
+                        onClick={() => toggle(m.key)}
+                        title={m.description}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors",
+                          active
+                            ? "bg-[#99ff33]/10 border-[#99ff33]/60 text-gray-900 dark:text-white"
+                            : "bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10",
+                        )}
+                      >
+                        {active && (
+                          <span className="text-[10px] font-mono tabular-nums text-gray-500 dark:text-gray-400">
+                            {idx + 1}
+                          </span>
+                        )}
+                        {m.defaultLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-gray-500">
+                  <span>
+                    {selected.length}/{MAX_TILE_METRICS} selected
+                    {!isExplicit && (
+                      <span className="ml-2 text-gray-400">
+                        (using inferred defaults)
+                      </span>
+                    )}
+                  </span>
+                  {isExplicit && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConfig({ ...config, tileMetrics: undefined })
+                      }
+                      className="text-indigo-600 dark:text-indigo-300 hover:underline"
+                    >
+                      reset to defaults
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 

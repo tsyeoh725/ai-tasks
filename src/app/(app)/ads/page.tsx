@@ -32,6 +32,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import {
+  TILE_METRICS_BY_KEY,
+  pluralActionLabel,
+  resolveTileMetrics,
+  type TileMetricKey,
+  type BrandLike,
+  type TileMetricInput,
+} from "@/lib/marketing/tile-metrics";
 
 type AdData = {
   id: string;
@@ -61,6 +69,7 @@ type BrandData = {
       frequencyMax: number | null;
     };
     costMetric?: { label: string; actionType: string };
+    tileMetrics?: string[];
   };
 };
 
@@ -102,14 +111,27 @@ function getAdHealth(ad: AdData, t: Thresholds): AdHealth {
   return "healthy";
 }
 
-function getBreaches(ad: AdData, t: Thresholds) {
+function brandLikeFrom(brand: BrandData | undefined, fallbackLabel: string): BrandLike {
   return {
-    cplOver: t.cplMax !== null && ad.cpl !== null && ad.cpl > t.cplMax,
-    ctrUnder: t.ctrMin !== null && ad.ctr !== null && ad.ctr < t.ctrMin,
-    freqOver:
-      t.frequencyMax !== null &&
-      ad.frequency !== null &&
-      ad.frequency > t.frequencyMax,
+    costMetricLabel: brand?.config.costMetric?.label || fallbackLabel,
+    costMetricActionType: brand?.config.costMetric?.actionType || "lead",
+    thresholds: brand?.config.thresholds || {
+      cplMax: null,
+      ctrMin: null,
+      frequencyMax: null,
+    },
+  };
+}
+
+function tileMetricInputFrom(ad: AdData): TileMetricInput {
+  return {
+    cpl: ad.cpl,
+    ctr: ad.ctr,
+    frequency: ad.frequency,
+    spend: ad.spend,
+    impressions: ad.impressions,
+    clicks: ad.clicks,
+    leads: ad.leads,
   };
 }
 
@@ -406,6 +428,17 @@ export default function AdsPage() {
         ? getCostLabel(brands[0].id)
         : "CPL";
 
+  // Conversion-count noun for the summary "Leads" tile. Single-brand view
+  // uses that brand's plural action ("purchases", "link clicks"). All-brands
+  // view falls back to the generic "Conversions" since the bucket mixes
+  // different action_types.
+  const summaryConversionLabel = (() => {
+    if (selectedBrand === "all") return "Conversions";
+    const brand = brands.find((b) => b.id === selectedBrand);
+    const noun = pluralActionLabel(brand?.config.costMetric?.actionType);
+    return noun.charAt(0).toUpperCase() + noun.slice(1);
+  })();
+
   const adsWithHealth = ads.map((ad) => ({
     ad,
     health: getAdHealth(ad, getThresholds(ad.brandId)),
@@ -583,7 +616,10 @@ export default function AdsPage() {
       {/* Summary tiles — five rounded cards with optional threshold bars */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <SummaryTile label="Spend" value={`RM${formatNumber(summary.spend)}`} />
-        <SummaryTile label="Leads" value={summary.leads.toLocaleString()} />
+        <SummaryTile
+          label={summaryConversionLabel}
+          value={summary.leads.toLocaleString()}
+        />
         <SummaryTile
           label={displayCostLabel}
           value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
@@ -754,8 +790,7 @@ export default function AdsPage() {
                       key={ad.id}
                       ad={ad}
                       health={health}
-                      costLabel={getCostLabel(ad.brandId)}
-                      thresholds={getThresholds(ad.brandId)}
+                      brand={brands.find((b) => b.id === ad.brandId)}
                       isActing={actionLoading === ad.id}
                       onAction={handleAdAction}
                       onOpen={() => setDetailAd(ad)}
@@ -786,23 +821,41 @@ export default function AdsPage() {
 function AdTile({
   ad,
   health,
-  costLabel,
-  thresholds,
+  brand,
   isActing,
   onAction,
   onOpen,
 }: {
   ad: AdData;
   health: AdHealth;
-  costLabel: string;
-  thresholds: Thresholds;
+  brand: BrandData | undefined;
   isActing: boolean;
   onAction: (id: string, action: "pause" | "activate") => void;
   onOpen: () => void;
 }) {
   const hc = HEALTH_STYLES[health];
-  const breaches = getBreaches(ad, thresholds);
   const isActive = ad.status === "ACTIVE";
+  const brandLike = brandLikeFrom(brand, "CPL");
+  const adInput = tileMetricInputFrom(ad);
+  const metricKeys = resolveTileMetrics(
+    brand?.config.tileMetrics,
+    brand?.config.costMetric?.actionType,
+  );
+  const cells = metricKeys.map((k) =>
+    TILE_METRICS_BY_KEY[k].compute(adInput, brandLike),
+  );
+  const footerNoun = pluralActionLabel(brand?.config.costMetric?.actionType);
+  const footerNounSingular = footerNoun.endsWith("s")
+    ? footerNoun.slice(0, -1)
+    : footerNoun;
+  const gridColsClass =
+    cells.length === 4
+      ? "grid-cols-4"
+      : cells.length === 2
+        ? "grid-cols-2"
+        : cells.length === 1
+          ? "grid-cols-1"
+          : "grid-cols-3";
 
   return (
     <div
@@ -866,44 +919,15 @@ function AdTile({
         </p>
       </div>
 
-      {/* Three-up metric strip */}
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        <TileMetric
-          label={costLabel}
-          value={ad.cpl !== null ? `RM${ad.cpl.toFixed(2)}` : "—"}
-          breach={breaches.cplOver}
-          direction="up"
-          target={
-            thresholds.cplMax !== null
-              ? `≤ RM${thresholds.cplMax.toFixed(2)}`
-              : null
-          }
-        />
-        <TileMetric
-          label="CTR"
-          value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
-          breach={breaches.ctrUnder}
-          direction="down"
-          target={
-            thresholds.ctrMin !== null
-              ? `≥ ${thresholds.ctrMin.toFixed(2)}%`
-              : null
-          }
-        />
-        <TileMetric
-          label="Freq"
-          value={ad.frequency !== null ? ad.frequency.toFixed(1) : "—"}
-          breach={breaches.freqOver}
-          direction="up"
-          target={
-            thresholds.frequencyMax !== null
-              ? `≤ ${thresholds.frequencyMax.toFixed(1)}`
-              : null
-          }
-        />
+      {/* Brand-configured metric strip (registry-driven). */}
+      <div className={cn("grid gap-2 mb-3", gridColsClass)}>
+        {cells.map((cell) => (
+          <TileMetricCell key={cell.key} cell={cell} />
+        ))}
       </div>
 
-      {/* Footer: spend / leads */}
+      {/* Footer: spend / conversion-count, with conversion noun derived from
+          brand.costMetric.actionType (e.g. "purchases", "link clicks"). */}
       <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-gray-100 dark:border-white/10 pt-3 -mx-4 px-4">
         <span className="font-mono tabular-nums text-gray-700 dark:text-gray-300">
           RM{formatNumber(ad.spend)}{" "}
@@ -912,7 +936,7 @@ function AdTile({
         <span className="font-mono tabular-nums text-gray-700 dark:text-gray-300">
           {ad.leads.toLocaleString()}{" "}
           <span className="text-gray-400">
-            {ad.leads === 1 ? "lead" : "leads"}
+            {ad.leads === 1 ? footerNounSingular : footerNoun}
           </span>
         </span>
       </div>
@@ -920,47 +944,47 @@ function AdTile({
   );
 }
 
-function TileMetric({
-  label,
-  value,
-  breach,
-  direction,
-  target,
+function TileMetricCell({
+  cell,
 }: {
-  label: string;
-  value: string;
-  breach: boolean;
-  direction: "up" | "down";
-  target: string | null;
+  cell: ReturnType<
+    (typeof TILE_METRICS_BY_KEY)[TileMetricKey]["compute"]
+  >;
 }) {
   const Glyph =
-    target === null ? Minus : direction === "up" ? TrendingUp : TrendingDown;
+    cell.targetDisplay === null
+      ? Minus
+      : cell.direction === "lower-better"
+        ? TrendingUp
+        : TrendingDown;
   return (
-    <div className="rounded-xl bg-gray-50 dark:bg-white/5 px-2.5 py-2">
+    <div className="rounded-xl bg-gray-50 dark:bg-white/5 px-2.5 py-2 min-w-0">
       <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium truncate">
-        {label}
+        {cell.label}
       </p>
       <p
         className={cn(
-          "text-base font-semibold tabular-nums mt-0.5",
-          breach ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-white",
+          "text-base font-semibold tabular-nums mt-0.5 truncate",
+          cell.breach
+            ? "text-red-600 dark:text-red-400"
+            : "text-gray-900 dark:text-white",
         )}
       >
-        {value}
+        {cell.display}
       </p>
       <div className="flex items-center gap-1 mt-1">
         <Glyph
           className={cn(
             "w-3 h-3 shrink-0",
-            breach
+            cell.breach
               ? "text-red-500"
-              : target === null
+              : cell.targetDisplay === null
                 ? "text-gray-300 dark:text-white/20"
                 : "text-emerald-500",
           )}
         />
         <span className="text-[10px] text-gray-400 truncate font-mono">
-          {target ?? "no target"}
+          {cell.targetDisplay ?? "no target"}
         </span>
       </div>
     </div>
