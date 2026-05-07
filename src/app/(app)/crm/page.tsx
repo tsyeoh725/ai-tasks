@@ -94,8 +94,11 @@ const SOURCE_LABELS: Record<LeadSource, { label: string; icon: string }> = {
 
 const PIPELINE: LeadStatus[] = ["new", "contacted", "qualified", "proposal", "negotiation", "won"];
 
-function money(n: number | null, currency = "USD") {
-  if (!n) return "—";
+// F-33: an actual value of 0 is information, not "missing data" — show
+// "MYR 0" (or whatever currency) instead of an em-dash for `0`. Reserve "—"
+// for nullish values where we genuinely don't know.
+function money(n: number | null | undefined, currency = "MYR") {
+  if (n === null || n === undefined) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
 }
 
@@ -227,7 +230,8 @@ function NewLeadDialog({ onCreated }: { onCreated: () => void }) {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Est. value (MYR)</Label>
+              {/* F-50: drop hardcoded MYR until leads carry per-row currency */}
+              <Label className="text-xs uppercase tracking-wider text-gray-500 font-semibold">Est. value</Label>
               <Input type="number" step="500" value={estimatedValue} onChange={(e) => setEstimatedValue(e.target.value)} />
             </div>
           </div>
@@ -1001,9 +1005,17 @@ export default function CrmPage() {
               List
             </button>
           </div>
-          <div className="flex items-center gap-1 flex-wrap">
+          {/* F-78: ARIA tablist semantics on the source-filter chips so
+              screen readers announce them as a related group of tabs. */}
+          <div
+            className="flex items-center gap-1 flex-wrap"
+            role="tablist"
+            aria-label="Filter leads by source"
+          >
             <button
               onClick={() => setSourceFilter("all")}
+              role="tab"
+              aria-selected={sourceFilter === "all"}
               className={cn(
                 "px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors",
                 sourceFilter === "all" ? "bg-[#0d1a00] text-[#99ff33]" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
@@ -1015,6 +1027,8 @@ export default function CrmPage() {
               <button
                 key={s}
                 onClick={() => setSourceFilter(s)}
+                role="tab"
+                aria-selected={sourceFilter === s}
                 className={cn(
                   "px-2.5 py-0.5 rounded-full text-[11px] font-medium transition-colors",
                   sourceFilter === s ? "bg-[#0d1a00] text-[#99ff33]" : "bg-gray-100 text-gray-600 hover:bg-gray-200"

@@ -81,6 +81,10 @@ export function CreateProjectDialog({ onCreated, trigger, defaultClientId, open:
   const [campaign, setCampaign] = useState("");
   const [templateSlug, setTemplateSlug] = useState("");
   const [budget, setBudget] = useState("");
+  // F-32: explicit currency on the project budget. Default is "MYR" because
+  // that's the workspace default (per ai-tasks-overview.md), but users can
+  // pick from the common currencies they already use elsewhere on Clients.
+  const [budgetCurrency, setBudgetCurrency] = useState("MYR");
   const [linkedGoalIds, setLinkedGoalIds] = useState<string[]>([]);
   const [newClientOpen, setNewClientOpen] = useState(false);
 
@@ -131,8 +135,14 @@ export function CreateProjectDialog({ onCreated, trigger, defaultClientId, open:
         templateSlug: templateSlug || null,
       };
 
-      // Store budget in customFields via the project API
-      if (budget) body.budget = parseFloat(budget);
+      // Store budget + currency in customFields via the project API.
+      // F-32: send currency alongside the amount so it can be displayed
+      // back on the project later — the schema doesn't have a budget
+      // column yet, so the API stuffs both into customFields JSON.
+      if (budget) {
+        body.budget = parseFloat(budget);
+        body.budgetCurrency = budgetCurrency;
+      }
 
       // Link goals after creation
       const res = await fetch("/api/projects", {
@@ -294,16 +304,35 @@ export function CreateProjectDialog({ onCreated, trigger, defaultClientId, open:
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="proj-budget">Budget (MYR)</Label>
-                <Input
-                  id="proj-budget"
-                  type="number"
-                  min="0"
-                  step="500"
-                  value={budget}
-                  onChange={(e) => setBudget(e.target.value)}
-                  placeholder="e.g. 15000"
-                />
+                {/* F-32: pair the budget input with a currency selector instead
+                    of pinning "MYR" in the label. The selector reuses the same
+                    short ISO codes Client uses elsewhere. */}
+                <Label htmlFor="proj-budget">Budget</Label>
+                <div className="flex gap-1.5">
+                  <Select value={budgetCurrency} onValueChange={(v) => v && setBudgetCurrency(v)}>
+                    <SelectTrigger className="w-24 shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="MYR">MYR</SelectItem>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="EUR">EUR</SelectItem>
+                      <SelectItem value="GBP">GBP</SelectItem>
+                      <SelectItem value="SGD">SGD</SelectItem>
+                      <SelectItem value="AUD">AUD</SelectItem>
+                      <SelectItem value="JPY">JPY</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    id="proj-budget"
+                    type="number"
+                    min="0"
+                    step="500"
+                    value={budget}
+                    onChange={(e) => setBudget(e.target.value)}
+                    placeholder="e.g. 15000"
+                  />
+                </div>
               </div>
             </div>
 

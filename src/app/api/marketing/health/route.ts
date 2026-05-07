@@ -63,6 +63,11 @@ export async function POST() {
         const latencyMs = Date.now() - startedAt;
         if (res.ok) {
           const data = (await res.json()) as { name?: string; id?: string };
+          // F-76 (audit-random-bug-fix): the casing of `data.name` is whatever
+          // is set on the Meta side (e.g. "Openclaw" vs "OpenClaw"). We pass
+          // it through verbatim so the operator sees exactly what Meta has —
+          // discrepancies they spot here usually mean someone updated their
+          // FB display name. Don't normalize.
           results.meta = { ok: true, message: `Connected as ${data.name ?? data.id}`, latencyMs };
         } else {
           const err = await res.json().catch(() => ({}));

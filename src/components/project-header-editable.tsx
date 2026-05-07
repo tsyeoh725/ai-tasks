@@ -67,9 +67,33 @@ export function ProjectHeaderEditable({
     }
   }
 
+  // F-31 (audit-random-bug-fix): detect a project name that ends with a
+  // duplicated last word (e.g. "EPS - Own Ads Ads"). Returns the dedupe
+  // candidate if a duplicate suffix was detected, otherwise null. Whole-word
+  // match, case-insensitive. The audit asked for a SOFT warning — we don't
+  // block the save, we just surface a toast suggesting the cleaner spelling.
+  function detectDuplicateSuffix(name: string): { deduped: string } | null {
+    const tokens = name.trim().split(/\s+/);
+    if (tokens.length < 2) return null;
+    const last = tokens[tokens.length - 1];
+    const prev = tokens[tokens.length - 2];
+    // Skip obvious sentinels — single letters and digits aren't real "words".
+    if (last.length < 2) return null;
+    if (last.toLowerCase() !== prev.toLowerCase()) return null;
+    return { deduped: tokens.slice(0, -1).join(" ") };
+  }
+
   async function saveField() {
     if (editing === "name" && localName.trim() && localName !== project.name) {
-      await save({ name: localName.trim() });
+      const trimmed = localName.trim();
+      const dup = detectDuplicateSuffix(trimmed);
+      if (dup) {
+        toastError({
+          title: `Heads up: "${trimmed}" ends with a duplicated word`,
+          description: `Did you mean "${dup.deduped}"? Saved anyway — rename again if you want to clean it up.`,
+        });
+      }
+      await save({ name: trimmed });
     } else if (editing === "campaign" && localCampaign !== (project.campaign ?? "")) {
       await save({ campaign: localCampaign.trim() || null });
     } else if (editing === "client" && localClient !== (project.category ?? "")) {

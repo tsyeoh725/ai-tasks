@@ -292,12 +292,32 @@ export default function JournalPage() {
                         <td className="px-3 py-2.5 text-right font-mono tabular-nums text-gray-700">
                           {entry.confidence !== null ? `${confidencePct}%` : "—"}
                         </td>
+                        {/* F-58: Result was always "—" for any non-executed
+                            row. Now we surface the actual outcome state by
+                            combining actionTaken with guardVerdict + the
+                            optional actionResult.error. Operators can tell
+                            at a glance whether a row was rejected by the
+                            Guard, queued for human approval, executed, or
+                            failed — without expanding it. */}
                         <td className="px-3 py-2.5">
-                          {entry.actionTaken ? (
-                            <Badge variant="success">Executed</Badge>
-                          ) : (
-                            <span className="text-xs text-gray-400">—</span>
-                          )}
+                          {(() => {
+                            const errMsg = (entry.actionResult as
+                              | { error?: unknown }
+                              | null)?.error;
+                            if (entry.actionTaken && errMsg) {
+                              return <Badge variant="destructive">Failed</Badge>;
+                            }
+                            if (entry.actionTaken) {
+                              return <Badge variant="success">Executed</Badge>;
+                            }
+                            if (entry.guardVerdict === "rejected") {
+                              return <Badge variant="secondary">Rejected</Badge>;
+                            }
+                            if (entry.guardVerdict === "approved") {
+                              return <Badge variant="warning">Awaiting run</Badge>;
+                            }
+                            return <Badge variant="default">Pending review</Badge>;
+                          })()}
                         </td>
                       </tr>
                       {isExpanded && (

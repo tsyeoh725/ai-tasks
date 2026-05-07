@@ -30,18 +30,18 @@ import {
   FolderOpen,
   Users,
   Target,
-  FileText,
-  Receipt,
   Menu,
   X,
   Plus,
 } from "lucide-react";
 
+// F-52: same command shouldn't appear on two rows. The shortcuts dialog
+// supports both ⌘/ and ? as triggers — render them on one row separated by
+// "or" so the dialog stays a single source of truth.
 const SHORTCUTS: Array<{ keys: string; description: string }> = [
   { keys: "⌘K", description: "Open global search / command palette" },
   { keys: "⌘N", description: "Create a new task" },
-  { keys: "⌘/", description: "Open this shortcuts dialog" },
-  { keys: "?", description: "Open this shortcuts dialog" },
+  { keys: "⌘/  or  ?", description: "Open this shortcuts dialog" },
   { keys: "Esc", description: "Close dialogs and menus" },
 ];
 
@@ -86,22 +86,12 @@ const MENU_ITEMS = [
     color: "text-rose-500",
     bg: "bg-rose-50 dark:bg-rose-950/40",
   },
-  {
-    key: "doc",
-    icon: FileText,
-    label: "New Doc",
-    description: "Write a document or brief",
-    color: "text-sky-500",
-    bg: "bg-sky-50 dark:bg-sky-950/40",
-  },
-  {
-    key: "invoice",
-    icon: Receipt,
-    label: "New Invoice",
-    description: "Create a client invoice",
-    color: "text-orange-500",
-    bg: "bg-orange-50 dark:bg-orange-950/40",
-  },
+  // F-03 / F-04 (audit-random-bug-fix): the "New Doc" and "New Invoice"
+  // entries were removed because /documents/new doesn't exist (404 outside
+  // the app shell) and there's no top-level /invoices route — invoices live
+  // per-client at /clients/[id]?tab=invoices via the in-page New Invoice
+  // dialog. Bring these items back together with the routes/pages, not on
+  // their own.
 ] as const;
 
 type MenuKey = (typeof MENU_ITEMS)[number]["key"];
@@ -158,12 +148,6 @@ export function TopHeader() {
         break;
       case "goal":
         router.push("/goals?new=1");
-        break;
-      case "doc":
-        router.push("/documents/new");
-        break;
-      case "invoice":
-        router.push("/clients");
         break;
     }
   }

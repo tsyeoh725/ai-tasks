@@ -71,6 +71,13 @@
       "when": 1778889600000,
       "tag": "0009_add_hot_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1778976000000,
+      "tag": "0010_backfill_duplicate_project_name_suffix",
+      "breakpoints": true
     }
   ]
 }

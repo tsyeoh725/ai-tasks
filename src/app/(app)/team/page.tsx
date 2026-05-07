@@ -7,6 +7,8 @@ import {
   Bell,
   Plus,
   X,
+  List,
+  LayoutGrid,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -570,12 +572,37 @@ function AssignTaskDialog({ member, open, onOpenChange, onCreated }: {
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+// F-47 (audit-random-bug-fix): My Team used to land directly in a pixel-art
+// office grid. The audit reasonably objected — the office is fun but it
+// hides the actual operational view (who's online, who has open tasks). We
+// now default to a "list" view that surfaces real data; the office stays as
+// an opt-in toggle. Preference is persisted in localStorage so a user who
+// likes the office isn't reset on every visit.
+type TeamView = "list" | "office";
+const TEAM_VIEW_STORAGE_KEY = "team-view-mode";
+
 export default function TeamPage() {
   const { success } = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Member | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  const [view, setView] = useState<TeamView>("list");
+
+  // Restore persisted view preference on mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem(TEAM_VIEW_STORAGE_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot localStorage hydration on mount; matches the pattern other pages use for restoring preferences
+    if (saved === "list" || saved === "office") setView(saved);
+  }, []);
+
+  function toggleView(next: TeamView) {
+    setView(next);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TEAM_VIEW_STORAGE_KEY, next);
+    }
+  }
 
   const fetchMembers = useCallback(async () => {
     setLoading(true);
@@ -636,15 +663,141 @@ export default function TeamPage() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {/* F-47: view-mode toggle (list = default, office = opt-in) */}
+            <div className="inline-flex items-center rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={() => toggleView("list")}
+                className={cn(
+                  "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-colors",
+                  view === "list"
+                    ? "bg-[#99ff33]/15 text-[#2d5200] font-semibold"
+                    : "text-gray-500 hover:text-gray-800"
+                )}
+                aria-pressed={view === "list"}
+                aria-label="Switch to list view"
+              >
+                <List size={12} /> List
+              </button>
+              <button
+                type="button"
+                onClick={() => toggleView("office")}
+                className={cn(
+                  "h-7 px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-colors",
+                  view === "office"
+                    ? "bg-[#99ff33]/15 text-[#2d5200] font-semibold"
+                    : "text-gray-500 hover:text-gray-800"
+                )}
+                aria-pressed={view === "office"}
+                aria-label="Switch to office view"
+              >
+                <LayoutGrid size={12} /> Office
+              </button>
+            </div>
             <MySettingsDialog me={me} onUpdate={fetchMembers} />
           </div>
         </div>
         <p className="text-[11px] text-gray-400 mt-2">
-          Click empty floor cells to move your character · click a teammate to see their tasks · use the <span className="font-semibold">Customize Me</span> button to change avatar
+          {view === "office"
+            ? "Click empty floor cells to move your character · click a teammate to see their tasks · use the "
+            : "Click a teammate to see their open tasks · use the "}
+          <span className="font-semibold">Customize Me</span> button to change avatar
         </p>
       </div>
 
-      {/* ── Office grid ── */}
+      {/* ── List view (F-47 default) ── */}
+      {view === "list" && (
+        <div className="flex-1 overflow-auto p-4 md:p-6">
+          {loading ? (
+            <div className="max-w-3xl mx-auto space-y-2">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-14 rounded-xl bg-gray-100 animate-pulse" />
+              ))}
+            </div>
+          ) : members.length === 0 ? (
+            <div className="max-w-3xl mx-auto py-16 text-center text-sm text-gray-400">
+              No team members yet.
+            </div>
+          ) : (
+            <ul className="max-w-3xl mx-auto bg-white rounded-xl border border-gray-200 overflow-hidden divide-y divide-gray-100">
+              {members.map((m) => (
+                <li
+                  key={m.userId}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors cursor-pointer",
+                    m.isMe && "bg-[#99ff33]/5"
+                  )}
+                  onClick={() => setSelected(m)}
+                >
+                  {/* Avatar */}
+                  <div
+                    className={cn(
+                      "relative h-10 w-10 rounded-xl flex items-center justify-center text-xl shrink-0 ring-2 ring-white shadow-sm",
+                      m.isMe && "ring-[#99ff33]"
+                    )}
+                    style={{
+                      background: `linear-gradient(135deg, ${m.characterColor} 0%, ${m.characterColor}aa 100%)`,
+                    }}
+                  >
+                    <span className="leading-none">{characterEmoji(m.character)}</span>
+                    <span
+                      className={cn(
+                        "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white",
+                        m.isOnline ? "bg-green-500" : "bg-gray-300"
+                      )}
+                    />
+                  </div>
+                  {/* Identity + status */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-gray-900 truncate">
+                        {m.name}
+                        {m.isMe && (
+                          <span className="ml-2 text-[10px] uppercase tracking-wider text-[#2d5200] font-bold">
+                            You
+                          </span>
+                        )}
+                      </p>
+                      {m.statusEmoji && (
+                        <span className="text-xs">{m.statusEmoji}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 truncate">
+                      {m.statusText || m.email}
+                    </p>
+                  </div>
+                  {/* Tasks badge */}
+                  <div className="text-right shrink-0">
+                    <div
+                      className={cn(
+                        "text-sm font-bold tabular-nums",
+                        m.openTasks > 0 ? "text-gray-900" : "text-gray-400"
+                      )}
+                    >
+                      {m.openTasks}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-wider text-gray-400">
+                      open
+                    </div>
+                  </div>
+                  {/* Online dot label */}
+                  <span
+                    className={cn(
+                      "shrink-0 text-[10px] uppercase tracking-wider font-semibold w-12 text-right",
+                      m.isOnline ? "text-green-600" : "text-gray-400"
+                    )}
+                  >
+                    {m.isOnline ? "Online" : "Away"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* ── Office grid (F-47: opt-in) ── */}
+      {view === "office" && (
       <div className="flex-1 overflow-auto flex items-center justify-center p-8">
         {loading ? (
           <div className="h-96 w-96 rounded-2xl bg-gray-100 animate-pulse" />
@@ -692,6 +845,7 @@ export default function TeamPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Legend ── */}
       <div className="border-t border-gray-200 bg-white px-6 py-3 flex items-center gap-4 text-[11px] text-gray-500">

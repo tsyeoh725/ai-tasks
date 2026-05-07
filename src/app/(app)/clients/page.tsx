@@ -95,7 +95,15 @@ function money(amount: number, currency = "USD") {
 
 function ClientLogo({ client, size = "md" }: { client: Pick<Client, "name" | "logoUrl" | "brandColor">; size?: "sm" | "md" | "lg" }) {
   const dim = { sm: "h-8 w-8 text-xs", md: "h-10 w-10 text-sm", lg: "h-14 w-14 text-lg" }[size];
-  if (client.logoUrl) {
+  // F-70: track image-load failure so we can fall back to the initials-on-
+  // brand-color placeholder. Previously a broken `logoUrl` rendered as an
+  // empty square (~10/19 cards in the audit) — no graceful fallback at all.
+  const [logoFailed, setLogoFailed] = useState(false);
+  // Reset whenever the URL changes (so changing avatars re-tries).
+  useEffect(() => {
+    setLogoFailed(false);
+  }, [client.logoUrl]);
+  if (client.logoUrl && !logoFailed) {
     return (
       <div className={cn("relative rounded-lg overflow-hidden shrink-0 bg-white ring-1 ring-gray-200", dim)}>
         <NextImage
@@ -104,6 +112,7 @@ function ClientLogo({ client, size = "md" }: { client: Pick<Client, "name" | "lo
           fill
           sizes="56px"
           unoptimized
+          onError={() => setLogoFailed(true)}
           className="object-cover"
         />
       </div>
@@ -232,7 +241,8 @@ function ClientCard({ client, onUpdate, onDelete }: { client: Client; onUpdate: 
         <div className="grid grid-cols-2 gap-2 pt-3 border-t border-gray-100">
           <div>
             <div className="flex items-center gap-1 text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
-              <UsersIcon size={9} /> Projects
+              {/* F-71: pluralize the label based on count (was "1 PROJECTS"). */}
+              <UsersIcon size={9} /> {(client._projectCount ?? 0) === 1 ? "Project" : "Projects"}
             </div>
             <p className="text-sm font-bold text-gray-800 mt-0.5">{client._projectCount ?? 0}</p>
           </div>
@@ -389,6 +399,26 @@ export default function ClientsPage() {
   });
 
   const totalOutstanding = clients.reduce((s, c) => s + (c._outstandingBalance ?? 0), 0);
+  // F-50: pick the most-common currency among clients with an outstanding
+  // balance for the summary line. Falls back to the default currency when
+  // there are no balances or every client uses the same currency anyway.
+  // Mixing currencies in a single sum is wrong, but the audit notes this
+  // is a feature gap; the per-client cards already display each client's
+  // currency correctly below. This avoids the previous USD default that
+  // mismatched the rest of the screen (which uses MYR).
+  const summaryCurrency = (() => {
+    const counts = new Map<string, number>();
+    for (const c of clients) {
+      if ((c._outstandingBalance ?? 0) <= 0) continue;
+      counts.set(c.currency, (counts.get(c.currency) ?? 0) + 1);
+    }
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [cur, count] of counts.entries()) {
+      if (count > bestCount) { best = cur; bestCount = count; }
+    }
+    return best ?? clients[0]?.currency ?? "MYR";
+  })();
 
   // Group by primary service when no filter applied
   const grouped = (() => {
@@ -418,7 +448,7 @@ export default function ClientsPage() {
             <p className="text-xs text-gray-500">
               {clients.length} client{clients.length !== 1 ? "s" : ""}
               {totalOutstanding > 0 && (
-                <> · <span className="text-red-600 font-semibold">{money(totalOutstanding)} outstanding</span></>
+                <> · <span className="text-red-600 font-semibold">{money(totalOutstanding, summaryCurrency)} outstanding</span></>
               )}
             </p>
           </div>
@@ -434,7 +464,9 @@ export default function ClientsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, industry, email…"
-              className="h-8 pl-7 text-sm border-gray-200"
+              // F-26: explicit dark mode text + border so typed characters
+              // don't render as dark-on-dark and disappear.
+              className="h-8 pl-7 text-sm border-gray-200 dark:border-white/10 dark:bg-white/5 text-gray-900 dark:text-gray-100"
             />
           </div>
 

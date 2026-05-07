@@ -107,13 +107,22 @@ async function runAuditTargets(
   // as one expandable "session" card. Cron-triggered runs get one session per
   // brand (since each brand may belong to a different user); UI-triggered
   // runs share a single session id per click.
-  const sessionLabel = `audit-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  log("info", "monitor", `Audit started for ${targets.length} brand(s)`, {
-    sessionLabel,
-    brands: targets.map((t) => t.name),
-  });
+  //
+  // F-77 (audit-random-bug-fix): use a `cycle-` prefix instead of `audit-`
+  // so a multi-brand cycle is recognisable as one logical run in the Logs
+  // UI (substring filter on "cycle-<ts>" pulls every brand together). The
+  // previous label `audit-<ts>-<brandId>` plus a parent context log that
+  // got buffered into only the *first* brand's session was misleading —
+  // the parent message no longer races the per-brand flush because we now
+  // log it INSIDE each brand iteration with its own context.
+  const cyclePrefix = `cycle-${new Date().toISOString().replace(/[:.]/g, "-")}`;
 
   for (const target of targets) {
+    log("info", "monitor", `Cycle started for ${target.name}`, {
+      cyclePrefix,
+      brandCount: targets.length,
+      allBrands: targets.map((t) => t.name),
+    });
     let cycleResult: MonitorCycleResult;
     try {
       cycleResult = await runMonitorCycleForBrand(target.id);
@@ -157,8 +166,9 @@ async function runAuditTargets(
 
     // Flush per-brand so logs are persisted under the brand's owner. Cron
     // runs may scan brands across multiple users; each gets its own session
-    // row keyed by user.
-    await flushLogs(`${sessionLabel}-${target.id}`, target.userId);
+    // row keyed by user. The shared `cyclePrefix` makes "all brands in this
+    // run" filterable as one substring search in the Logs UI.
+    await flushLogs(`${cyclePrefix}-${target.id}`, target.userId);
   }
 
   return results;
