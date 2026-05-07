@@ -55,13 +55,22 @@ type AdData = {
   metaAdId: string;
   brandId: string;
   brandName?: string;
+  // adSetId / campaignId carried so the detail dialog's "Open in Meta
+  // Ads Manager" link can deep-link with selected_campaign_ids /
+  // selected_adset_ids in addition to selected_ad_ids — Meta uses these
+  // to populate the breadcrumb path so the user lands inside the ad's
+  // campaign instead of a flat ads list.
+  adSetId?: string;
   adSetName?: string;
+  campaignId?: string;
   campaignName?: string;
 };
 
 type BrandData = {
   id: string;
   name: string;
+  // metaAccountId required for the Meta Ads Manager deep link (`act=`).
+  metaAccountId: string;
   config: {
     thresholds: {
       cplMax: number | null;
@@ -322,7 +331,9 @@ export default function AdsPage() {
           metaAdId: ad.metaAdId as string,
           brandId: ad.brandId as string,
           brandName: (ad.brandName as string | null) ?? undefined,
+          adSetId: (ad.adSetId as string | null) ?? undefined,
           adSetName: (ad.adSetName as string | null) ?? undefined,
+          campaignId: (ad.campaignId as string | null) ?? undefined,
           campaignName: (ad.campaignName as string | null) ?? undefined,
         })),
       );
@@ -868,6 +879,11 @@ export default function AdsPage() {
             ? getAdHealth(detailAd, getThresholds(detailAd.brandId))
             : null
         }
+        accountId={
+          detailAd
+            ? brands.find((b) => b.id === detailAd.brandId)?.metaAccountId ?? null
+            : null
+        }
       />
     </div>
   );
@@ -1102,18 +1118,45 @@ function SummaryTile({
   );
 }
 
+// Build a Meta Ads Manager deep-link that lands on the specific ad with
+// the right account context. `act=` is required — without it Meta opens
+// whichever account the user last viewed (often nothing they have access
+// to). Adding selected_campaign_ids / selected_adset_ids populates the
+// breadcrumb path so the user arrives inside the ad's campaign + adset
+// rather than a flat ads grid. metaAccountId is stored as the bare
+// numeric id per the brand-create form (placeholder "e.g. 123456789"),
+// but defensively strip an `act_` prefix if one slipped in.
+function buildMetaAdsManagerUrl(
+  accountId: string | null,
+  adId: string,
+  campaignId?: string,
+  adSetId?: string,
+): string {
+  if (!accountId) {
+    // Fallback to old behaviour — at least scope by ad id.
+    return `https://www.facebook.com/adsmanager/manage/ads?selected_ad_ids=${adId}`;
+  }
+  const act = accountId.replace(/^act_/, "");
+  const params = new URLSearchParams({ act, selected_ad_ids: adId });
+  if (campaignId) params.set("selected_campaign_ids", campaignId);
+  if (adSetId) params.set("selected_adset_ids", adSetId);
+  return `https://www.facebook.com/adsmanager/manage/ads?${params.toString()}`;
+}
+
 function AdDetailDialog({
   ad,
   onClose,
   thresholds,
   costLabel,
   health,
+  accountId,
 }: {
   ad: AdData | null;
   onClose: () => void;
   thresholds: Thresholds | null;
   costLabel: string;
   health: AdHealth | null;
+  accountId: string | null;
 }) {
   const open = ad !== null;
   return (
@@ -1146,54 +1189,91 @@ function AdDetailDialog({
               )}
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <DetailStat label="Spend" value={`RM${ad.spend.toFixed(2)}`} />
-              <DetailStat label="Leads" value={ad.leads.toLocaleString()} />
-              <DetailStat
-                label={costLabel}
-                value={ad.cpl !== null ? `RM${ad.cpl.toFixed(2)}` : "—"}
-                hint={
-                  thresholds?.cplMax
-                    ? `target ≤ RM${thresholds.cplMax.toFixed(2)}`
-                    : undefined
-                }
-              />
-              <DetailStat
-                label="Impressions"
-                value={ad.impressions.toLocaleString()}
-              />
-              <DetailStat label="Clicks" value={ad.clicks.toLocaleString()} />
-              <DetailStat
-                label="CTR"
-                value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
-                hint={
-                  thresholds?.ctrMin
-                    ? `target ≥ ${thresholds.ctrMin.toFixed(2)}%`
-                    : ad.impressions < 100
-                      ? "needs ≥100 impressions"
+            {/* Performance: the three graded metrics that drive health.
+                Surfaced first and visually weightier so the operator
+                sees the diagnostic vital signs (against their targets)
+                before the raw counters. */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5">
+                Performance
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <DetailStat
+                  label={costLabel}
+                  value={ad.cpl !== null ? `RM${ad.cpl.toFixed(2)}` : "—"}
+                  hint={
+                    thresholds?.cplMax
+                      ? `target ≤ RM${thresholds.cplMax.toFixed(2)}`
                       : undefined
-                }
-              />
-              <DetailStat
-                label="Frequency"
-                value={ad.frequency !== null ? ad.frequency.toFixed(2) : "—"}
-                hint={
-                  thresholds?.frequencyMax
-                    ? `target ≤ ${thresholds.frequencyMax.toFixed(2)}`
-                    : undefined
-                }
-              />
+                  }
+                />
+                <DetailStat
+                  label="CTR"
+                  value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
+                  hint={
+                    thresholds?.ctrMin
+                      ? `target ≥ ${thresholds.ctrMin.toFixed(2)}%`
+                      : ad.impressions < 100
+                        ? "needs ≥100 impressions"
+                        : undefined
+                  }
+                />
+                <DetailStat
+                  label="Frequency"
+                  value={
+                    ad.frequency !== null ? ad.frequency.toFixed(2) : "—"
+                  }
+                  hint={
+                    thresholds?.frequencyMax
+                      ? `target ≤ ${thresholds.frequencyMax.toFixed(2)}`
+                      : undefined
+                  }
+                />
+              </div>
+            </div>
+
+            {/* Volume: raw counters, compact. No targets to grade
+                against — these are context for the performance numbers
+                above. 4-up on sm+ avoids the orphan-tile look the
+                previous 3-col layout produced with 7 stats. */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5">
+                Volume
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <CompactStat
+                  label="Spend"
+                  value={`RM${ad.spend.toFixed(2)}`}
+                />
+                <CompactStat
+                  label="Leads"
+                  value={ad.leads.toLocaleString()}
+                />
+                <CompactStat
+                  label="Impressions"
+                  value={ad.impressions.toLocaleString()}
+                />
+                <CompactStat
+                  label="Clicks"
+                  value={ad.clicks.toLocaleString()}
+                />
+              </div>
             </div>
 
             {ad.metaAdId && (
               <div className="pt-2 border-t border-gray-200 dark:border-white/10">
                 <a
-                  href={`https://www.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaAdId}`}
+                  href={buildMetaAdsManagerUrl(
+                    accountId,
+                    ad.metaAdId,
+                    ad.campaignId,
+                    ad.adSetId,
+                  )}
                   target="_blank"
                   rel="noreferrer"
                   className="text-xs text-indigo-600 dark:text-indigo-300 hover:underline"
                 >
-                  Open in Meta Ads Manager &rarr;
+                  Open this ad in Meta Ads Manager &rarr;
                 </a>
               </div>
             )}
@@ -1224,6 +1304,22 @@ function DetailStat({
       {hint && (
         <p className="text-[10px] text-muted-foreground mt-0.5">{hint}</p>
       )}
+    </div>
+  );
+}
+
+// Compact volume tile — same visual language as DetailStat but tighter
+// padding and smaller value text so a 4-up row reads as a supporting
+// strip rather than competing with the graded performance trio above.
+function CompactStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50/50 dark:bg-white/5 px-2.5 py-1.5">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        {label}
+      </p>
+      <p className="text-sm font-semibold text-gray-900 dark:text-white mt-0.5 tabular-nums truncate">
+        {value}
+      </p>
     </div>
   );
 }

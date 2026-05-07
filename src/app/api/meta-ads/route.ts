@@ -23,7 +23,10 @@ export async function GET(req: Request) {
   const ws = await resolveWorkspaceForUser(user.id);
   const userBrands = await db.query.brands.findMany({
     where: brandsAccessibleWhere(ws, user.id),
-    columns: { id: true, name: true, config: true, isActive: true },
+    // metaAccountId is needed client-side to deep-link the ad detail
+    // dialog into Meta Ads Manager with `act=` set; without it Meta
+    // opens whatever account the user last viewed.
+    columns: { id: true, name: true, config: true, isActive: true, metaAccountId: true },
   });
   const userBrandIds = userBrands.map((b) => b.id);
 
