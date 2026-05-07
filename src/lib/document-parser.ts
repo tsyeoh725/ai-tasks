@@ -1,14 +1,26 @@
-import fs from "fs";
+// SL-4: async file I/O. The previous fs.readFileSync blocked the event loop
+// for the duration of the read; on a 50 MB PDF (no size cap historically)
+// this stalled every other request to the server.
+//
+// Dynamic imports defer pulling in pdf-parse / mammoth until the moment we
+// need them, so cold-start latency for non-document routes stays unaffected.
+
+import { promises as fs } from "fs";
 
 export async function extractText(filePath: string, fileType: string): Promise<string> {
-  const buffer = fs.readFileSync(filePath);
+  const buffer = await fs.readFile(filePath);
 
   switch (fileType.toLowerCase()) {
     case "pdf": {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { PDFParse } = require("pdf-parse");
-        const parser = new PDFParse({});
+        const mod = (await import("pdf-parse")) as unknown as {
+          PDFParse: new (opts: Record<string, unknown>) => {
+            load(buf: Buffer): Promise<void>;
+            getText(): Promise<string>;
+            destroy(): void;
+          };
+        };
+        const parser = new mod.PDFParse({});
         await parser.load(buffer);
         const text = await parser.getText();
         parser.destroy();
@@ -20,8 +32,9 @@ export async function extractText(filePath: string, fileType: string): Promise<s
     case "doc":
     case "docx": {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const mammoth = require("mammoth");
+        const mammoth = (await import("mammoth")) as unknown as {
+          extractRawText(opts: { buffer: Buffer }): Promise<{ value: string }>;
+        };
         const result = await mammoth.extractRawText({ buffer });
         return result.value;
       } catch {
@@ -38,9 +51,10 @@ export async function extractText(filePath: string, fileType: string): Promise<s
 }
 
 export async function renderDocxToHtml(filePath: string): Promise<string> {
-  const buffer = fs.readFileSync(filePath);
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mammoth = require("mammoth");
+  const buffer = await fs.readFile(filePath);
+  const mammoth = (await import("mammoth")) as unknown as {
+    convertToHtml(opts: { buffer: Buffer }): Promise<{ value: string }>;
+  };
   const result = await mammoth.convertToHtml({ buffer });
   return result.value;
 }
