@@ -115,14 +115,23 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
           createSectionId: section.id,
         })),
       ]
-    : statusColumns.map((col) => ({
-        key: col.id,
-        droppableId: col.id,
-        title: col.title,
-        dotClass: col.color,
-        tasks: tasks.filter((t) => t.status === col.id),
-        createDefaultStatus: col.id,
-      }));
+    : (() => {
+        // F-49: hide the Blocked column entirely when no task uses that
+        // status. It was always visible but never receivable, leading users
+        // to wonder how to mark something as blocked.
+        const visibleColumns = statusColumns.filter((col) => {
+          if (col.id !== "blocked") return true;
+          return tasks.some((t) => t.status === "blocked");
+        });
+        return visibleColumns.map((col) => ({
+          key: col.id,
+          droppableId: col.id,
+          title: col.title,
+          dotClass: col.color,
+          tasks: tasks.filter((t) => t.status === col.id),
+          createDefaultStatus: col.id,
+        }));
+      })();
 
   function scrollToIdx(idx: number) {
     const el = scrollRef.current;
@@ -244,22 +253,29 @@ export function KanbanBoard({ tasks, projectId, onTaskMove, onRefresh, sections,
             <AddSectionColumn projectId={projectId} onCreated={onRefresh} />
           </>
         ) : (
-          statusColumns.map((col) => {
-            const columnTasks = tasks.filter((t) => t.status === col.id);
-            return (
-              <BoardColumn
-                key={col.id}
-                droppableId={col.id}
-                title={col.title}
-                dotClass={col.color}
-                tasks={columnTasks}
-                projectId={projectId}
-                onRefresh={onRefresh}
+          // F-49: also hide the Blocked column on the desktop kanban view
+          // when no task currently uses that status, so the column doesn't
+          // sit there forever as an empty placeholder.
+          statusColumns
+            .filter((col) =>
+              col.id !== "blocked" || tasks.some((t) => t.status === "blocked"),
+            )
+            .map((col) => {
+              const columnTasks = tasks.filter((t) => t.status === col.id);
+              return (
+                <BoardColumn
+                  key={col.id}
+                  droppableId={col.id}
+                  title={col.title}
+                  dotClass={col.color}
+                  tasks={columnTasks}
+                  projectId={projectId}
+                  onRefresh={onRefresh}
                   onTaskClick={onTaskClick}
-                createDefaultStatus={col.id}
-              />
-            );
-          })
+                  createDefaultStatus={col.id}
+                />
+              );
+            })
         )}
       </div>
     </DragDropContext>

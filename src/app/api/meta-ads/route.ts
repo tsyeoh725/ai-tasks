@@ -134,12 +134,32 @@ export async function GET(req: Request) {
     }
   }
 
-  function computeHealth(cpl: number | null, ctr: number | null, frequency: number | null, bId: string): string {
+  function computeHealth(
+    cpl: number | null,
+    ctr: number | null,
+    frequency: number | null,
+    bId: string,
+    counters: { spend: number; impressions: number; clicks: number; leads: number },
+  ): string {
+    // F-06: classify against actual delivery first. An ad with spend +
+    // impressions + leads is *never* "unknown / NO DATA"; the previous
+    // implementation returned "unknown" whenever the brand's thresholds were
+    // missing, which lit up healthy ads as NO DATA on the dashboard.
+    const hasAnyData =
+      counters.spend > 0 ||
+      counters.impressions > 0 ||
+      counters.clicks > 0 ||
+      counters.leads > 0;
+    if (!hasAnyData) return "unknown";
+
     const cfg = brandConfigById.get(bId);
     const thresholds = cfg?.thresholds as
       | { cplMax: number | null; ctrMin: number | null; frequencyMax: number | null }
       | undefined;
-    if (!thresholds) return "unknown";
+    // Data present, no thresholds configured → grade as healthy. Brand-level
+    // settings UI surfaces the "configure thresholds" prompt; we don't put a
+    // false "NO DATA" label on every running ad.
+    if (!thresholds) return "healthy";
 
     const cplBad =
       thresholds.cplMax !== null &&
@@ -198,7 +218,12 @@ export async function GET(req: Request) {
 
       const frequency = days > 0 ? (agg?.freqSum ?? 0) / days : dateFilterActive ? null : ad.frequency ?? null;
 
-      const healthScore = computeHealth(cpl, ctr, frequency, ad.brandId);
+      const healthScore = computeHealth(cpl, ctr, frequency, ad.brandId, {
+        spend,
+        impressions,
+        clicks,
+        leads,
+      });
 
       return {
         id: ad.id,

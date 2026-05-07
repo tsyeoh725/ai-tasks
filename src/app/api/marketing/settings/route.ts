@@ -45,12 +45,13 @@ export async function GET() {
     settings[row.key] = parseValue(row.value);
   }
 
-  // Mask the access token — never return it in full.
+  // F-66: never return any portion of the token (was previously sending
+  // prefix+suffix). The UI only needs a "set / not set" boolean to know
+  // whether to show a placeholder or "Saved" copy.
   if (typeof settings.meta_access_token === "string" && settings.meta_access_token.length > 0) {
-    const token = settings.meta_access_token;
-    settings.meta_access_token_masked = `${token.slice(0, 4)}…${token.slice(-4)}`;
-    settings.meta_access_token = undefined;
+    settings.meta_access_token_set = true;
   }
+  delete settings.meta_access_token;
 
   // Connected brands (ad accounts) — lightweight list, scoped to active workspace.
   const ws = await resolveWorkspaceForUser(user.id);

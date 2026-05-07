@@ -10,6 +10,7 @@ import {
   Pie,
   Cell,
   Tooltip,
+  Legend,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -143,7 +144,10 @@ export default function DashboardPage() {
   const now = new Date();
   const hour = now.getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const firstName = session?.user?.name?.split(" ")[0] || "there";
+  // F-51: while session is still loading, don't show a stale "there"
+  // placeholder. We render a name-shaped skeleton in the header.
+  const firstName = session?.user?.name?.split(" ")[0];
+  const sessionReady = Boolean(session?.user?.name);
   const dateStr = format(now, "EEEE, MMMM d");
 
   const upcomingTasks = [...(data?.dueToday || []), ...(data?.upcoming || [])];
@@ -262,8 +266,18 @@ export default function DashboardPage() {
         <div className="flex items-start justify-between mb-8 flex-wrap gap-4">
           <div>
             <p className="text-sm text-muted-foreground mb-1">{dateStr}</p>
-            <h1 className="text-3xl font-bold">
-              {greeting}, {firstName}
+            <h1 className="text-3xl font-bold flex items-center gap-2">
+              <span>{greeting},</span>
+              {sessionReady ? (
+                <span>{firstName}</span>
+              ) : (
+                // F-51: skeleton instead of "there" placeholder while
+                // next-auth resolves the session.
+                <span
+                  aria-hidden
+                  className="inline-block h-7 w-24 rounded bg-muted animate-pulse"
+                />
+              )}
             </h1>
             {data && (
               <p className="text-sm text-muted-foreground mt-1">
@@ -489,17 +503,23 @@ export default function DashboardPage() {
                   {statusData.length === 0 ? (
                     <p className="py-12 text-center text-sm text-muted-foreground">No tasks yet</p>
                   ) : !chartReady ? (
-                    <div className="h-52" />
+                    // F-40: keep min-height even before chart mounts so the
+                    // recharts ResponsiveContainer doesn't see width=-1 on
+                    // first paint.
+                    <div className="h-64" />
                   ) : (
-                    <div className="h-52">
+                    // F-08, F-40: bigger container + legend below chart so the
+                    // donut isn't decoration. Each segment now shows its name
+                    // and count next to a coloured swatch.
+                    <div className="h-64 min-h-64">
                       <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                         <PieChart>
                           <Pie
                             data={statusData}
                             cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={75}
+                            cy="45%"
+                            innerRadius={45}
+                            outerRadius={70}
                             dataKey="value"
                             paddingAngle={2}
                           >
@@ -507,15 +527,50 @@ export default function DashboardPage() {
                               <Cell key={index} fill={entry.color} />
                             ))}
                           </Pie>
-                          <Tooltip />
+                          <Tooltip
+                            formatter={(value, name) => {
+                              const n = typeof value === "number" ? value : Number(value) || 0;
+                              const total = statusData.reduce((acc, s) => acc + s.value, 0);
+                              const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+                              return [`${n} (${pct}%)`, name];
+                            }}
+                          />
+                          <Legend
+                            verticalAlign="bottom"
+                            height={36}
+                            iconType="circle"
+                            wrapperStyle={{ fontSize: 12 }}
+                            formatter={(value, entry) => {
+                              // entry.payload has the data point. Recharts
+                              // typings don't expose .value on legend payload,
+                              // so look up the count by name.
+                              const point = statusData.find((s) => s.name === value);
+                              const count = point ? point.value : 0;
+                              return (
+                                <span className="text-foreground">
+                                  {value} <span className="text-muted-foreground">({count})</span>
+                                </span>
+                              );
+                            }}
+                          />
                           <text
                             x="50%"
-                            y="50%"
+                            y="45%"
                             textAnchor="middle"
                             dominantBaseline="middle"
                             className="fill-foreground text-2xl font-bold"
                           >
                             {stats.total}
+                          </text>
+                          <text
+                            x="50%"
+                            y="45%"
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            dy={20}
+                            className="fill-muted-foreground text-[10px] uppercase tracking-wider"
+                          >
+                            total
                           </text>
                         </PieChart>
                       </ResponsiveContainer>
@@ -625,28 +680,65 @@ export default function DashboardPage() {
                       No recent activity
                     </p>
                   ) : (
-                    <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                      {data.recentActivity.map((a) => (
-                        <div
-                          key={a.id}
-                          onClick={() => router.push(`/tasks/${a.entityId}`)}
-                          className="flex items-start gap-2.5 cursor-pointer hover:bg-accent/50 rounded-md p-1.5 -mx-1.5 transition-colors"
-                        >
-                          <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-medium flex-shrink-0 mt-0.5">
-                            {a.userName[0]?.toUpperCase()}
+                    // F-64: group entries by day so the list isn't a flat
+                    // wall of "about 8 hours ago" — each entry's day header
+                    // gives temporal context.
+                    <div className="space-y-4 max-h-[400px] overflow-y-auto">
+                      {(() => {
+                        const groups: { label: string; entries: ActivityEntry[] }[] = [];
+                        const today = new Date();
+                        const todayKey = format(today, "yyyy-MM-dd");
+                        const yesterdayKey = format(
+                          new Date(today.getTime() - 86_400_000),
+                          "yyyy-MM-dd",
+                        );
+                        for (const a of data.recentActivity) {
+                          const d = new Date(a.createdAt);
+                          const key = format(d, "yyyy-MM-dd");
+                          const label =
+                            key === todayKey
+                              ? "Today"
+                              : key === yesterdayKey
+                              ? "Yesterday"
+                              : format(d, "EEE, MMM d");
+                          let group = groups.find((g) => g.label === label);
+                          if (!group) {
+                            group = { label, entries: [] };
+                            groups.push(group);
+                          }
+                          group.entries.push(a);
+                        }
+                        return groups.map((g) => (
+                          <div key={g.label}>
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold mb-1.5">
+                              {g.label}
+                            </div>
+                            <div className="space-y-1.5">
+                              {g.entries.map((a) => (
+                                <div
+                                  key={a.id}
+                                  onClick={() => router.push(`/tasks/${a.entityId}`)}
+                                  className="flex items-start gap-2.5 cursor-pointer hover:bg-accent/50 rounded-md p-1.5 -mx-1.5 transition-colors"
+                                >
+                                  <div className="h-6 w-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-medium flex-shrink-0 mt-0.5">
+                                    {a.userName[0]?.toUpperCase()}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs">
+                                      <span className="font-medium">{a.userName}</span>
+                                      <span className="text-muted-foreground"> {actionPhrase(a)} </span>
+                                      <span className="font-medium">{a.entityTitle}</span>
+                                    </p>
+                                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                                      {formatDistanceToNow(new Date(a.createdAt), { addSuffix: true })}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs">
-                              <span className="font-medium">{a.userName}</span>
-                              <span className="text-muted-foreground"> {actionPhrase(a)} </span>
-                              <span className="font-medium">{a.entityTitle}</span>
-                            </p>
-                            <p className="text-[10px] text-muted-foreground mt-0.5">
-                              {formatDistanceToNow(new Date(a.createdAt), { addSuffix: true })}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
+                        ));
+                      })()}
                     </div>
                   )}
                 </CardContent>
@@ -706,16 +798,21 @@ function ClientDeadlinesRow({
   if (deadlines.length === 0) {
     return (
       <div className="mb-6">
+        {/* F-18: prefixed "Client deadlines:" so the banner can't be read as
+            "all of your tasks are clear" — there can still be plenty of tasks
+            below in the My Tasks panel. */}
         <Card className="border-l-4 border-l-green-500 bg-green-50/40 dark:bg-green-500/5">
           <CardContent className="py-4 flex items-center gap-3">
-            <div className="h-9 w-9 rounded-full bg-green-100 flex items-center justify-center shrink-0">
-              <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div className="h-9 w-9 rounded-full bg-green-100 dark:bg-green-500/20 flex items-center justify-center shrink-0">
+              <svg className="h-4 w-4 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
               </svg>
             </div>
             <div>
-              <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">All clear</p>
-              <p className="text-xs text-gray-500">No upcoming client deadlines in the next 14 days.</p>
+              <p className="font-semibold text-sm text-gray-900 dark:text-gray-100">Client deadlines: all clear</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                No client-deliverable deadlines in the next 14 days. (Personal/internal tasks are listed below.)
+              </p>
             </div>
           </CardContent>
         </Card>

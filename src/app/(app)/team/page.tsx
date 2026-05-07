@@ -848,7 +848,11 @@ export default function TeamPage() {
       )}
 
       {/* ── Legend ── */}
-      <div className="border-t border-gray-200 bg-white px-6 py-3 flex items-center gap-4 text-[11px] text-gray-500">
+      {/* F-24: derive the badge count from the same aggregate the header
+          uses (sum of openTasks across members) so the two never disagree.
+          Previously the footer hard-coded "3" while the header showed the
+          real total. */}
+      <div className="border-t border-gray-200 dark:border-white/10 bg-white dark:bg-[#0d130d] px-6 py-3 flex items-center gap-4 text-[11px] text-gray-500 dark:text-gray-400">
         <div className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-full bg-green-500" /> Online
         </div>
@@ -856,7 +860,10 @@ export default function TeamPage() {
           <span className="h-2 w-2 rounded-full bg-gray-400" /> Away
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded-full bg-red-500 text-[7px] text-white flex items-center justify-center font-bold">3</span> Open tasks
+          <span className="h-3 w-3 rounded-full bg-red-500 text-[7px] text-white flex items-center justify-center font-bold">
+            {members.reduce((s, m) => s + m.openTasks, 0)}
+          </span>{" "}
+          Open tasks
         </div>
         <div className="ml-auto text-gray-400">
           Total team capacity: {members.length * 5} task slots

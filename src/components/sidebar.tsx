@@ -345,15 +345,17 @@ export function Sidebar() {
       </ScrollArea>
 
       {/* User */}
-      <div className="border-t border-slate-100 p-2">
+      <div className="border-t border-slate-100 dark:border-white/10 p-2">
         <DropdownMenu>
-          <DropdownMenuTrigger className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+          <DropdownMenuTrigger className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
             <div className="h-7 w-7 rounded-full bg-[#99ff33] flex items-center justify-center text-xs font-semibold text-[#0d1a00]">
               {session?.user?.name?.[0]?.toUpperCase() || "?"}
             </div>
-            <span className="truncate text-sm text-slate-700">{session?.user?.name || "User"}</span>
+            <span className="truncate text-sm text-slate-700 dark:text-slate-200">{session?.user?.name || "User"}</span>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-48">
+          {/* F-46: open above the trigger so the menu doesn't overlap the
+              Projects list above. */}
+          <DropdownMenuContent align="start" side="top" sideOffset={8} className="w-48">
             <DropdownMenuItem onClick={() => (window.location.href = "/settings")}>
               Settings
             </DropdownMenuItem>
@@ -398,7 +400,10 @@ function WorkNav({
         />
         <NavItem
           href="/clients"
-          active={pathname.startsWith("/projects") || pathname.startsWith("/clients")}
+          // SOT: only highlight when the user is actually on a clients page —
+          // /projects/<id> has its own NavItem in the Projects collapsible
+          // section, so we shouldn't claim "Clients" is active there. F-23.
+          active={pathname.startsWith("/clients")}
           label="Clients"
           icon={<Building2 className="h-4 w-4" />}
         />
@@ -600,7 +605,9 @@ function MarketingNav({
           <NavItem
             href="/memory"
             active={pathname.startsWith("/memory")}
-            label="AI Memory"
+            // F-59: matches the page title at src/app/(app)/memory/page.tsx
+            // and the marketing nav label.
+            label="Agent Memory"
             icon={<Brain className="h-4 w-4" />}
           />
           <NavItem

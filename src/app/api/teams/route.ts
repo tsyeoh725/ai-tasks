@@ -9,13 +9,16 @@ export async function GET() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
+  // F-13: don't echo every team member's full email in the list response.
+  // Name + id is enough for avatar/badge rendering; the detail panel can
+  // fetch contact info on click.
   const memberships = await db.query.teamMembers.findMany({
     where: eq(teamMembers.userId, user.id),
     with: {
       team: {
         with: {
           members: {
-            with: { user: { columns: { id: true, name: true, email: true } } },
+            with: { user: { columns: { id: true, name: true } } },
           },
         },
       },

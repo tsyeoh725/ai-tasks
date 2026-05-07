@@ -182,7 +182,7 @@ export default async function MarketingDashboardPage() {
           <QuickLink
             href="/memory"
             icon={<Brain className="h-4 w-4" />}
-            label="AI Memory"
+            label="Agent Memory"
             description="What the agent has learned"
           />
           <QuickLink

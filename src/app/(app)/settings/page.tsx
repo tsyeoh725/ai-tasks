@@ -69,9 +69,22 @@ function CalendarSection() {
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
+    // F-35: parsing JSON of a 401/404 still resolves, so the previous version
+    // showed "Connected" whenever the request didn't throw — out of step with
+    // the schedule banner. Gate on `r.ok` so both surfaces agree.
     fetch("/api/calendar/sync")
-      .then((r) => r.json())
-      .then((data) => setStatus({ connected: true, email: data.email, lastSyncedAt: data.lastSyncedAt }))
+      .then(async (r) => {
+        if (!r.ok) {
+          setStatus({ connected: false });
+          return;
+        }
+        const data = await r.json();
+        if (data && (data.email || data.lastSyncedAt)) {
+          setStatus({ connected: true, email: data.email, lastSyncedAt: data.lastSyncedAt });
+        } else {
+          setStatus({ connected: false });
+        }
+      })
       .catch(() => setStatus({ connected: false }))
       .finally(() => setLoading(false));
   }, []);
@@ -356,7 +369,9 @@ function TelegramSection() {
 
 function MetaAdsSection() {
   const [token, setToken] = useState("");
-  const [masked, setMasked] = useState<string | null>(null);
+  // F-66: don't render any portion of the saved token. We only need to know
+  // *whether* one exists so we can show "Saved" / placeholder copy.
+  const [hasSavedToken, setHasSavedToken] = useState(false);
   const [connectedBrands, setConnectedBrands] = useState<
     { id: string; name: string; metaAccountId: string; isActive: boolean }[]
   >([]);
@@ -370,8 +385,11 @@ function MetaAdsSection() {
       .then((r) => r.json())
       .then((data) => {
         const s = data?.settings || {};
-        if (typeof s.meta_access_token_masked === "string") {
-          setMasked(s.meta_access_token_masked);
+        // Backend may still send a `meta_access_token_masked` string for
+        // compatibility — collapse to a boolean so we never render any
+        // portion of the secret.
+        if (typeof s.meta_access_token_masked === "string" || s.meta_access_token_set === true) {
+          setHasSavedToken(true);
         }
         setConnectedBrands(data?.brands || []);
       })
@@ -390,7 +408,7 @@ function MetaAdsSection() {
         body: JSON.stringify({ meta_access_token: token }),
       });
       if (res.ok) {
-        setMasked(`${token.slice(0, 4)}…${token.slice(-4)}`);
+        setHasSavedToken(true);
         setToken("");
       }
     } catch {
@@ -438,11 +456,11 @@ function MetaAdsSection() {
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder={masked ? `Saved: ${masked}` : "Paste your access token"}
+            placeholder={hasSavedToken ? "Saved · ••••••" : "Paste your access token"}
           />
-          {masked && !token && (
+          {hasSavedToken && !token && (
             <p className="text-xs text-muted-foreground">
-              A token is saved ({masked}). Enter a new one to replace it.
+              A token is saved. Enter a new one to replace it.
             </p>
           )}
         </div>
@@ -611,7 +629,7 @@ function MonitorScheduleSection() {
 
 function AiSection() {
   type Source = "db" | "env" | "legacy_db" | "legacy_env" | "none";
-  type ProviderStatus = { configured: boolean; source: Source; lastFour: string | null };
+  type ProviderStatus = { configured: boolean; source: Source };
   type Status = { jarvis: ProviderStatus; audit: ProviderStatus; model: string | null };
 
   const [status, setStatus] = useState<Status | null>(null);
@@ -660,20 +678,17 @@ function AiSection() {
 
   function describe(s: ProviderStatus) {
     if (!s.configured) return <span className="text-muted-foreground">Not set</span>;
-    const masked = s.lastFour ? `••••••••${s.lastFour}` : "•••••";
+    // F-10/F-66: never render any portion of the secret (was previously
+    // showing last 4 chars). Source detail is suppressed in production
+    // because it leaks where the key lives (.env vs DB) — only the rough
+    // status is useful for end users.
     const sourceLabel =
-      s.source === "db"
-        ? "set via this UI"
-        : s.source === "env"
-          ? "from .env"
-          : s.source === "legacy_db"
-            ? "legacy slot — re-save to migrate"
-            : s.source === "legacy_env"
-              ? "legacy .env var — set new var to migrate"
-              : "";
+      s.source === "legacy_db" || s.source === "legacy_env"
+        ? "legacy slot — re-save to migrate"
+        : "Saved";
     return (
-      <span className="font-mono text-xs">
-        {masked} <span className="text-muted-foreground font-sans">({sourceLabel})</span>
+      <span className="text-xs text-muted-foreground">
+        ••••••••• <span className="ml-1">({sourceLabel})</span>
       </span>
     );
   }
@@ -728,8 +743,7 @@ function AiSection() {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Used by /api/ai/command, /api/ai/digest, /api/ai/jarvis, project briefs, scheduling,
-            Telegram replies. Env fallback: <code>OPENAI_API_KEY_JARVIS</code>.
+            Used by the assistant, project briefs, scheduling, and Telegram replies.
           </p>
         </div>
 
@@ -766,8 +780,7 @@ function AiSection() {
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            Used by the Marketing audit pipeline (claude-guard) — Haiku for verdicts, Sonnet for
-            weekly summaries. Env fallback: <code>ANTHROPIC_API_KEY_AUDIT</code>.
+            Used by the marketing audit pipeline.
           </p>
         </div>
 
@@ -790,11 +803,7 @@ function AiSection() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            OpenAI model id used by Jarvis. Default:{" "}
-            <code className="font-mono">gpt-4o-mini</code>. Audit uses fixed Anthropic models
-            (haiku for verdicts, sonnet for summaries) — overridable via{" "}
-            <code className="font-mono">JARVIS_GUARD_MODEL</code> /{" "}
-            <code className="font-mono">JARVIS_SUMMARY_MODEL</code> env vars.
+            OpenAI model id used by Jarvis. Leave blank to use the workspace default.
           </p>
         </div>
 

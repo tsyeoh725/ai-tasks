@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Loader2,
   RefreshCw,
@@ -79,6 +79,14 @@ export default function HealthPage() {
     }
     setLoading(false);
   }
+
+  // F-07: auto-run on mount so the user lands on populated cards instead of
+  // an empty page that requires a manual click. Re-running is still possible
+  // via the same button.
+  useEffect(() => {
+    runCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
+  }, []);
 
   return (
     <div className="max-w-3xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6 animate-fade-in">

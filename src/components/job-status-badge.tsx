@@ -55,8 +55,37 @@ export function JobStatusBadge() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount + interval poll
     fetchJobs();
-    const interval = setInterval(fetchJobs, 3000);
-    return () => clearInterval(interval);
+    // F-29: 3s polling produced 600+ requests in 90s when combined with the
+    // dashboard's other polled endpoints. Back off to 15s and stop polling
+    // when the tab is hidden — there's nothing for a backgrounded tab to do
+    // with fresh job state, and active jobs almost always finish within 15s
+    // anyway. When the tab regains focus we refetch immediately so the user
+    // doesn't see stale state.
+    let interval: ReturnType<typeof setInterval> | null = null;
+    function start() {
+      if (interval) return;
+      interval = setInterval(fetchJobs, 15000);
+    }
+    function stop() {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    }
+    function onVisibility() {
+      if (document.hidden) {
+        stop();
+      } else {
+        fetchJobs();
+        start();
+      }
+    }
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [fetchJobs]);
 
   useEffect(() => {

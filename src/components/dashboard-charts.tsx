@@ -14,6 +14,7 @@ import {
   LineChart,
   Line,
   CartesianGrid,
+  Legend,
 } from "recharts";
 import { format, subDays, parseISO, startOfDay, isAfter } from "date-fns";
 import {
@@ -199,29 +200,55 @@ export function DashboardCharts({ tasks, projectName }: Props) {
               <div className="h-64">
                 {chartReady && (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  {/* F-08: donut now has a Legend, slice tooltip with raw
+                      counts, and the center text gets a "tasks" caption so
+                      a stripped-down screenshot is still readable. */}
                   <PieChart>
                     <Pie
                       data={statusData}
                       cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={90}
+                      cy="45%"
+                      innerRadius={55}
+                      outerRadius={85}
                       dataKey="value"
+                      nameKey="name"
                       paddingAngle={2}
                     >
                       {statusData.map((entry, index) => (
                         <Cell key={index} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip
+                      formatter={(value, name) => {
+                        const n = typeof value === "number" ? value : Number(value) || 0;
+                        const pct = stats.total > 0 ? Math.round((n / stats.total) * 100) : 0;
+                        return [`${n} (${pct}%)`, name];
+                      }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={28}
+                      iconType="circle"
+                      wrapperStyle={{ fontSize: 12 }}
+                    />
                     <text
                       x="50%"
-                      y="50%"
+                      y="45%"
                       textAnchor="middle"
                       dominantBaseline="middle"
                       className="fill-foreground text-2xl font-bold"
                     >
                       {stats.total}
+                    </text>
+                    <text
+                      x="50%"
+                      y="45%"
+                      dy={22}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="fill-muted-foreground text-[11px]"
+                    >
+                      {stats.total === 1 ? "task" : "tasks"}
                     </text>
                   </PieChart>
                 </ResponsiveContainer>

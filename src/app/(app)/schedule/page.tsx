@@ -211,11 +211,33 @@ export default function SchedulePage() {
         if (data?.items) {
           const events = data.items.filter((item: { type: string }) => item.type === "event")
           setCalendarEvents(events)
-          setCalendarConnected(events.length > 0)
+          // F-35: do NOT infer connection state from event count — a connected
+          // user with no events on this day was being shown the "Connect"
+          // banner. Connection state is fetched separately below from the
+          // same endpoint Settings uses, so the two views always agree.
         }
       })
       .catch(() => {})
   }, [currentDate, viewMode])
+
+  // F-35: read connection status from the same endpoint the Settings page
+  // uses, so the schedule banner and Settings can never disagree.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/calendar/sync")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return
+        setCalendarConnected(Boolean(data))
+      })
+      .catch(() => {
+        if (cancelled) return
+        setCalendarConnected(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     fetchCalendarEvents()
@@ -229,9 +251,10 @@ export default function SchedulePage() {
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data?.warnings)) setWarnings(data.warnings)
+        // F-30: single fetch instead of fetch + 500ms-delayed second fetch.
+        // The auto-sync endpoint awaits its own writes so the follow-up was
+        // doing duplicate work for no benefit.
         fetchBlocks()
-        // Follow-up fetch to catch any blocks that might have been delayed
-        setTimeout(() => fetchBlocks(), 500)
       })
       .catch(() => {})
   }, [fetchBlocks])
@@ -714,12 +737,9 @@ export default function SchedulePage() {
               <p className="text-xs text-muted-foreground">
                 Your time-blocked schedule. Tasks with due dates are auto-placed in your free time slots.
               </p>
-              <div className="inline-flex items-center gap-1.5 self-start text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5 font-medium">
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Drag-and-drop coming soon — use the task detail to change dates
-              </div>
+              {/* F-79: removed the persistent "drag-and-drop coming soon"
+                  banner. The same hint is now shown on hover of an unscheduled
+                  task chip instead of permanently occupying the header. */}
             </div>
             <div className="flex items-center gap-2">
               <Button

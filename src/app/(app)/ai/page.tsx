@@ -90,6 +90,9 @@ function AiPageInner() {
                       : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   )}
                   type="button"
+                  // F-67: native tooltip on truncated conversation titles so
+                  // the full title is reachable on hover.
+                  title={conv.title}
                 >
                   <p className="truncate font-medium">{conv.title}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">

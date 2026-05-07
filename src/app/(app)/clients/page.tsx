@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import NextImage from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   Search,
@@ -135,10 +136,30 @@ function ClientLogo({ client, size = "md" }: { client: Pick<Client, "name" | "lo
 // ─── Card ─────────────────────────────────────────────────────────────────────
 
 function ClientCard({ client, onUpdate, onDelete }: { client: Client; onUpdate: (id: string, patch: Partial<Client>) => void; onDelete: (id: string) => void; }) {
+  const router = useRouter();
   const status = STATUS_PALETTE[client.status];
   const services = parseServices(client.services);
+  // F-68: make the entire card a navigation target. The previous behavior
+  // only routed when the user clicked the name; clicking anywhere else did
+  // nothing. We keep the inner Link for accessible navigation, and add a
+  // div-level onClick that respects nested interactive elements.
+  function handleCardClick(e: React.MouseEvent) {
+    // Don't navigate if the click originated from a button, link, or
+    // dropdown trigger inside the card.
+    const target = e.target as HTMLElement;
+    if (target.closest("button, a, [role='menu'], [data-no-nav]")) return;
+    router.push(`/clients/${client.id}`);
+  }
   return (
-    <div className="group relative rounded-2xl border border-gray-200 bg-white hover:border-[#99ff33]/60 hover:shadow-[0_4px_20px_rgb(153_255_51/0.12)] transition-all overflow-hidden">
+    <div
+      className="group relative rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/[0.03] hover:border-[#99ff33]/60 hover:shadow-[0_4px_20px_rgb(153_255_51/0.12)] transition-all overflow-hidden cursor-pointer"
+      onClick={handleCardClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") router.push(`/clients/${client.id}`);
+      }}
+      role="link"
+      tabIndex={0}
+    >
       {/* Accent bar */}
       <div className="h-1" style={{ backgroundColor: client.brandColor || "#99ff33" }} />
 
@@ -566,24 +587,32 @@ export default function ClientsPage() {
                 const cat = key === "__none__"
                   ? { label: "Uncategorized", color: "#9ca3af", emoji: "📦" }
                   : getCategory(key);
+                // F-43: when EVERY client is in the same "Uncategorized"
+                // bucket, the group header just adds noise — the user has
+                // 19 clients and one section labeled "Uncategorized · 19".
+                // Skip the header in that case (single-group rendering).
+                const isOnlyUncategorized =
+                  key === "__none__" && grouped!.size === 1;
                 return (
                   <section key={key}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <div
-                        className="h-7 w-7 rounded-lg flex items-center justify-center text-sm shadow-sm"
-                        style={{ backgroundColor: `${cat.color}20` }}
-                      >
-                        {cat.emoji}
+                    {!isOnlyUncategorized && (
+                      <div className="flex items-center gap-2 mb-3">
+                        <div
+                          className="h-7 w-7 rounded-lg flex items-center justify-center text-sm shadow-sm"
+                          style={{ backgroundColor: `${cat.color}20` }}
+                        >
+                          {cat.emoji}
+                        </div>
+                        <h2 className="text-sm font-bold text-gray-800 dark:text-gray-200">{cat.label}</h2>
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
+                          style={{ backgroundColor: `${cat.color}20`, color: cat.color }}
+                        >
+                          {list.length}
+                        </span>
+                        <div className="flex-1 h-px bg-gradient-to-r from-gray-200 dark:from-white/10 to-transparent ml-2" />
                       </div>
-                      <h2 className="text-sm font-bold text-gray-800">{cat.label}</h2>
-                      <span
-                        className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
-                        style={{ backgroundColor: `${cat.color}20`, color: cat.color }}
-                      >
-                        {list.length}
-                      </span>
-                      <div className="flex-1 h-px bg-gradient-to-r from-gray-200 to-transparent ml-2" />
-                    </div>
+                    )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                       {list.map((c) => (
                         <ClientCard key={c.id} client={c} onUpdate={updateClient} onDelete={deleteClient} />

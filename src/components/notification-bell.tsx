@@ -46,8 +46,30 @@ export function NotificationBell() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount + interval poll; not migrating to Suspense
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 30000);
-    return () => clearInterval(interval);
+    // F-29/F-30: pause polling when the tab is hidden — there's nothing the
+    // user can act on in a backgrounded tab, and unread counts get refreshed
+    // when they tab back. Keeps the request rate honest on long-lived tabs.
+    let interval: ReturnType<typeof setInterval> | null = null;
+    function start() {
+      if (interval) return;
+      interval = setInterval(fetchNotifications, 30000);
+    }
+    function stop() {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    }
+    function onVisibility() {
+      if (document.hidden) stop();
+      else { fetchNotifications(); start(); }
+    }
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [fetchNotifications]);
 
   useEffect(() => {
@@ -84,11 +106,30 @@ export function NotificationBell() {
       setUnreadCount((c) => Math.max(0, c - 1));
     }
 
-    // Navigate to entity
-    if (notif.entityType === "task" && notif.entityId) {
-      router.push(`/tasks/${notif.entityId}`);
-      setOpen(false);
+    // F-39: navigate for any known entity type, not just tasks. Previously
+    // clicking a "Switch to Edge Point from the workspace dropdown"
+    // notification did nothing because the handler short-circuited on
+    // entityType !== "task".
+    if (notif.entityId) {
+      const target =
+        notif.entityType === "task"
+          ? `/tasks/${notif.entityId}`
+          : notif.entityType === "project"
+          ? `/projects/${notif.entityId}`
+          : notif.entityType === "client"
+          ? `/clients/${notif.entityId}`
+          : notif.entityType === "team"
+          ? `/teams`
+          : null;
+      if (target) {
+        router.push(target);
+        setOpen(false);
+        return;
+      }
     }
+    // Fallback: take the user to the inbox so the click is never wasted.
+    router.push("/inbox");
+    setOpen(false);
   }
 
   const typeIcons: Record<string, string> = {
@@ -144,9 +185,9 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-[380px] bg-white border border-gray-200 rounded-xl shadow-xl z-50 max-h-[60vh] overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b">
-            <h3 className="font-semibold text-sm">Notifications</h3>
+        <div className="absolute right-0 top-full mt-2 w-[380px] bg-white dark:bg-[#0d130d] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 max-h-[60vh] overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 dark:border-white/10">
+            <h3 className="font-semibold text-sm text-gray-900 dark:text-gray-100">Notifications</h3>
             {unreadCount > 0 && (
               <button
                 onClick={markAllRead}
@@ -189,13 +230,25 @@ export function NotificationBell() {
                         {typeIcons[notif.type] || "\u{1F514}"}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className={cn("text-sm truncate", !notif.read && "font-medium")}>
+                        {/* F-48: bump title weight + contrast so the
+                            actionable line stands out from the body and the
+                            timestamp. Previously all three lines shared the
+                            same dim grey, making the title indistinguishable
+                            from the timestamp. */}
+                        <p
+                          className={cn(
+                            "text-sm truncate font-medium text-gray-900 dark:text-gray-100",
+                            !notif.read && "font-semibold",
+                          )}
+                        >
                           {notif.title}
                         </p>
                         {notif.message && (
-                          <p className="text-[11px] text-gray-500 truncate mt-0.5">{notif.message}</p>
+                          <p className="text-[11px] text-gray-600 dark:text-gray-300 truncate mt-0.5">
+                            {notif.message}
+                          </p>
                         )}
-                        <p className="text-xs text-gray-400 mt-0.5">
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                           {timeAgo(notif.createdAt)}
                         </p>
                       </div>

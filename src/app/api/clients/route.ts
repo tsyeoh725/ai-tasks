@@ -23,10 +23,24 @@ export async function GET(req: Request) {
   }
   if (status) where = and(where, eq(clients.status, status as "active" | "onboarding" | "paused" | "archived"));
 
+  // F-12: trim listing fields. taxId, billingAddress, customFields, notes,
+  // and contact details are not needed in a list view and should only be
+  // returned by /api/clients/[id] (full detail) for owners/team members.
   const list = await db.query.clients.findMany({
     where,
     orderBy: (c, { asc }) => [asc(c.name)],
     limit: 200,
+    columns: {
+      id: true,
+      name: true,
+      logoUrl: true,
+      brandColor: true,
+      industry: true,
+      status: true,
+      currency: true,
+      createdAt: true,
+      updatedAt: true,
+    },
   });
 
   // Attach quick stats

@@ -167,6 +167,20 @@ type TaskLite = {
 
 type Tab = "overview" | "projects" | "invoices" | "payments" | "tasks" | "links" | "settings";
 
+// F-57: explicit, locale-stable date format ("7 Apr 2026") so no one
+// has to wonder whether 04/07/2026 is April 7 or July 4. Use this helper
+// instead of bare `toLocaleDateString()` for any user-visible date.
+function fmtDate(d: Date | string | number | null | undefined): string {
+  if (!d) return "";
+  const date = d instanceof Date ? d : new Date(d);
+  if (isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function money(amount: number, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
 }
@@ -331,10 +345,17 @@ function LogoWithUpload({ client, onUpdate }: { client: Client; onUpdate: () => 
           onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }}
         />
       </label>
-      <span className={cn(
-        "text-[10px] transition-colors flex items-center gap-0.5",
-        pasteHint ? "text-[#99ff33]" : "text-gray-400",
-      )}>
+      {/* F-69: only show the "Ctrl+V to paste" hint while the user is
+          actively pasting OR hovering the avatar, instead of always. The
+          stray hint under every avatar was confusing without context. */}
+      <span
+        className={cn(
+          "text-[10px] transition-colors flex items-center gap-0.5",
+          pasteHint
+            ? "text-[#99ff33] opacity-100"
+            : "text-gray-400 opacity-0 group-hover:opacity-100",
+        )}
+      >
         <ClipboardPaste size={9} />
         {pasteHint ? "Pasting…" : "Ctrl+V to paste"}
       </span>
@@ -1239,7 +1260,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                       <p className="text-sm font-medium text-gray-800 truncate">{t.title}</p>
                       <p className="text-[11px] text-gray-500 truncate">
                         {t.project?.name}
-                        {t.dueDate && ` · due ${new Date(t.dueDate).toLocaleDateString()}`}
+                        {t.dueDate && ` · due ${fmtDate(t.dueDate)}`}
                       </p>
                     </div>
                     <StatusPill status={t.status} />
@@ -1274,9 +1295,9 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         </div>
                         {inv.title && <p className="text-sm text-gray-800 mt-0.5 truncate">{inv.title}</p>}
                         <p className="text-[11px] text-gray-400 mt-0.5">
-                          {inv.issuedDate && `Issued ${new Date(inv.issuedDate).toLocaleDateString()}`}
-                          {inv.dueDate && ` · due ${new Date(inv.dueDate).toLocaleDateString()}`}
-                          {inv.paidDate && ` · paid ${new Date(inv.paidDate).toLocaleDateString()}`}
+                          {inv.issuedDate && `Issued ${fmtDate(inv.issuedDate)}`}
+                          {inv.dueDate && ` · due ${fmtDate(inv.dueDate)}`}
+                          {inv.paidDate && ` · paid ${fmtDate(inv.paidDate)}`}
                         </p>
                       </div>
                       <p className="font-bold text-gray-900 tabular-nums">{money(inv.amount, inv.currency)}</p>
@@ -1334,7 +1355,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
                         <span className="text-[10px] text-gray-400 uppercase">{p.source.replace("_", " ")}</span>
                       </div>
                       <p className="text-[11px] text-gray-500 mt-0.5 truncate">
-                        {new Date(p.paymentDate).toLocaleDateString()}
+                        {fmtDate(p.paymentDate)}
                         {p.reference && ` · ${p.reference}`}
                         {p.rawDescription && ` · ${p.rawDescription}`}
                       </p>

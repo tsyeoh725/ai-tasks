@@ -28,6 +28,11 @@ export default function NewProjectPage() {
   // Autocomplete suggestions from existing projects
   const [existingCampaigns, setExistingCampaigns] = useState<string[]>([]);
   const [existingClients, setExistingClients] = useState<string[]>([]);
+  // F-25: keep id+name pairs for clients so we can write `clientId` on the
+  // new project (not just the legacy `category` text). Without this, the
+  // project's Properties → CLIENT chip is forever empty even though the
+  // server's projectClients junction sees the link.
+  const [clientLookup, setClientLookup] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     fetch("/api/projects?limit=500")
       .then((r) => r.json())
@@ -35,6 +40,18 @@ export default function NewProjectPage() {
         const list = data.projects || [];
         setExistingCampaigns(Array.from(new Set(list.map((p: { campaign?: string }) => p.campaign).filter(Boolean))) as string[]);
         setExistingClients(Array.from(new Set(list.map((p: { category?: string }) => p.category).filter(Boolean))) as string[]);
+      })
+      .catch(() => {});
+    fetch("/api/clients")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = (data.clients || []) as { id: string; name: string }[];
+        const lookup = new Map<string, string>();
+        for (const c of list) lookup.set(c.name.toLowerCase(), c.id);
+        setClientLookup(lookup);
+        // Also offer client names as autocomplete options (in addition to
+        // legacy category strings) so users see real records first.
+        setExistingClients((prev) => Array.from(new Set([...list.map((c) => c.name), ...prev])));
       })
       .catch(() => {});
   }, []);
@@ -70,22 +87,47 @@ export default function NewProjectPage() {
     setStep("details");
   }
 
+  // F-72: strip obvious script tags before submitting. Server-side validation
+  // still runs on the API route, but blocking the most common injection on
+  // the client gives faster, clearer feedback than a 4xx round-trip.
+  function sanitize(value: string): string {
+    return value
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/<\/?script\b[^>]*>/gi, "")
+      .trim();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    const cleanName = sanitize(name);
+    if (!cleanName) return;
 
     setLoading(true);
     try {
+      // F-25: resolve the typed client name back to a clientId when it
+      // matches a real record. The server still accepts `category` for
+      // legacy callers, but new projects should populate `clientId` so the
+      // Properties → CLIENT chip and the projectClients junction stay in
+      // sync.
+      const cleanClient = sanitize(clientName);
+      const resolvedClientId = cleanClient
+        ? clientLookup.get(cleanClient.toLowerCase()) ?? null
+        : null;
+
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || null,
+          name: cleanName,
+          description: sanitize(description) || null,
           color,
           icon: icon || null,
-          category: clientName.trim() || null,
-          campaign: campaign.trim() || null,
+          clientId: resolvedClientId,
+          // Keep `category` populated only when we couldn't match a real
+          // client — preserves the existing free-text behaviour for users
+          // who haven't migrated to clients yet.
+          category: resolvedClientId ? null : (cleanClient || null),
+          campaign: sanitize(campaign) || null,
           templateSlug,
         }),
       });
@@ -112,8 +154,10 @@ export default function NewProjectPage() {
         </div>
 
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">New Project</h1>
-          <p className="text-gray-500 mt-1">Start from a template or create from scratch.</p>
+          {/* F-74: explicit dark mode color so the heading stays readable on
+              dark backgrounds. */}
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">New Project</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-1">Start from a template or create from scratch.</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
@@ -192,8 +236,15 @@ export default function NewProjectPage() {
                 placeholder="e.g. Edge Point Website Revamp"
                 required
                 autoFocus
+                // F-72: cap project name at a reasonable length so the UI
+                // doesn't have to handle 140+ char strings later.
+                maxLength={80}
                 className="border-gray-200 focus:border-[#99ff33] focus:ring-[#99ff33]/30"
               />
+              {/* F-72: subtle counter so the user sees the cap. */}
+              <p className="text-[10px] text-gray-400 text-right">
+                {name.length}/80
+              </p>
             </div>
 
             {/* Campaign */}
@@ -305,7 +356,9 @@ export default function NewProjectPage() {
 
             <Button
               type="submit"
-              className="w-full bg-[#99ff33] hover:bg-[#7acc29] text-[#0d1a00] font-bold h-11 text-base rounded-xl shadow-none"
+              // F-73: explicit border + ring in dark mode so the brand-green
+              // button doesn't read as disabled-looking on a dark canvas.
+              className="w-full bg-[#99ff33] hover:bg-[#7acc29] text-[#0d1a00] dark:text-[#0a1500] font-bold h-11 text-base rounded-xl shadow-none ring-2 ring-transparent dark:ring-[#99ff33]/50 border-[#99ff33] hover:border-[#7acc29] disabled:opacity-60"
               disabled={loading}
             >
               {loading ? "Creating…" : "Create Project"}

@@ -10,6 +10,7 @@ import { notifyTaskAssigned } from "@/lib/notifications";
 import { autoSyncSchedule } from "@/lib/time-blocker";
 import { getAccessibleProjectIds } from "@/lib/queries/projects";
 import { parsePagination } from "@/lib/api";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
 
 const ALLOWED_STATUS = ["todo", "in_progress", "done", "blocked"] as const;
 const ALLOWED_PRIORITY = ["low", "medium", "high", "urgent"] as const;
@@ -47,7 +48,12 @@ export async function GET(req: Request) {
       conditions.push(orFn(eq(tasks.clientId, clientId), inArray(tasks.projectId, projectIds))!);
     }
   } else {
-    const projectIds = await getAccessibleProjectIds(user.id);
+    // Scope to the active workspace (cookie) so personal/team views don't
+    // leak each other's tasks. F-22 in the May 2026 audit traced personal
+    // sidebar showing empty while Tasks/Workload/Schedule still showed team
+    // data to this call sliding in without a workspace argument.
+    const ws = await resolveWorkspaceForUser(user.id);
+    const projectIds = await getAccessibleProjectIds(user.id, ws);
     if (projectIds.length === 0) {
       return NextResponse.json({ tasks: [], total: 0, page, limit, hasMore: false });
     }
@@ -76,7 +82,9 @@ export async function GET(req: Request) {
       with: {
         project: { columns: { name: true, color: true } },
         client: { columns: { id: true, name: true, logoUrl: true, brandColor: true } },
-        assignee: { columns: { name: true, email: true } },
+        // F-13: drop assignee email from list rows; name is enough to render
+        // avatars/badges. The task detail panel can fetch the email on click.
+        assignee: { columns: { id: true, name: true } },
         subtasks: true,
       },
       orderBy,

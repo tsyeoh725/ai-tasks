@@ -358,13 +358,16 @@ export function JarvisOverview() {
       {/* ── Suggestion chips (shown when no messages) ── */}
       {messages.length === 0 && !loadingBrief && briefing?.error !== "not_configured" && (
         <div className="px-5 py-3 border-b border-white/[0.08] flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wider text-white/40 font-semibold">Try:</span>
+          {/* F-65: brighter chip + label colors so light-grey-on-dark-green
+              is readable. The previous text-white/70 + bg-white/[0.04] failed
+              even casual contrast checks against the brand-green panel. */}
+          <span className="text-[10px] uppercase tracking-wider text-white/70 font-semibold">Try:</span>
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setInput(s)}
-              className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.04] hover:bg-white/[0.08] text-white/70 hover:text-white border border-white/[0.06] transition-all"
+              className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.10] hover:bg-white/[0.18] text-white hover:text-white border border-white/[0.18] hover:border-white/30 transition-all font-medium"
             >
               {s}
             </button>

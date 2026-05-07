@@ -29,6 +29,8 @@ import {
   Sparkles,
   Clock,
   Loader2,
+  Building2,
+  Megaphone,
 } from "lucide-react";
 
 // ============ TYPES ============
@@ -37,7 +39,7 @@ export type CommandItem = {
   id: string;
   title: string;
   subtitle?: string;
-  group: "tasks" | "projects" | "actions" | "pages";
+  group: "tasks" | "projects" | "clients" | "brands" | "actions" | "pages";
   icon?: React.ReactNode;
   onSelect: () => void;
 };
@@ -194,7 +196,7 @@ export function CommandPaletteProvider({
 // ============ DIALOG ============
 
 type SearchResult = {
-  type: "task" | "project" | "comment";
+  type: "task" | "project" | "comment" | "client" | "brand";
   id: string;
   title: string;
   subtitle?: string;
@@ -340,9 +342,13 @@ function CommandPaletteDialog({
       },
     }));
 
-    // Tasks + projects from server
+    // Tasks + projects + clients + brands from server. F-02 extended the
+    // server payload to include clients and brands; render those as their own
+    // groups so users can hop straight to them.
     const tasks: CommandItem[] = [];
     const projects: CommandItem[] = [];
+    const clientItems: CommandItem[] = [];
+    const brandItems: CommandItem[] = [];
     for (const r of serverResults) {
       if (r.type === "task") {
         tasks.push({
@@ -367,6 +373,30 @@ function CommandPaletteDialog({
           onSelect: () => {
             onClose();
             router.push(`/projects/${r.id}`);
+          },
+        });
+      } else if (r.type === "client") {
+        clientItems.push({
+          id: `client:${r.id}`,
+          title: r.title,
+          subtitle: r.subtitle,
+          group: "clients",
+          icon: <Building2 className="h-4 w-4" />,
+          onSelect: () => {
+            onClose();
+            router.push(`/clients/${r.id}`);
+          },
+        });
+      } else if (r.type === "brand") {
+        brandItems.push({
+          id: `brand:${r.id}`,
+          title: r.title,
+          subtitle: r.subtitle,
+          group: "brands",
+          icon: <Megaphone className="h-4 w-4" />,
+          onSelect: () => {
+            onClose();
+            router.push(`/brands/${r.id}`);
           },
         });
       }
@@ -430,6 +460,8 @@ function CommandPaletteDialog({
 
     result.push(...tasks);
     result.push(...projects);
+    result.push(...clientItems);
+    result.push(...brandItems);
     result.push(...filteredActions);
     result.push(...filteredPages);
     return result;
@@ -459,6 +491,8 @@ function CommandPaletteDialog({
     const groups: Record<CommandItem["group"], CommandItem[]> = {
       tasks: [],
       projects: [],
+      clients: [],
+      brands: [],
       actions: [],
       pages: [],
     };
@@ -469,7 +503,14 @@ function CommandPaletteDialog({
   // Build a flat list matching render order so keyboard navigation uses
   // the same indices as display
   const flatInRenderOrder = useMemo(() => {
-    const order: CommandItem["group"][] = ["tasks", "projects", "actions", "pages"];
+    const order: CommandItem["group"][] = [
+      "tasks",
+      "projects",
+      "clients",
+      "brands",
+      "actions",
+      "pages",
+    ];
     const out: CommandItem[] = [];
     for (const g of order) out.push(...grouped[g]);
     return out;
@@ -486,6 +527,8 @@ function CommandPaletteDialog({
   const groupLabels: Record<CommandItem["group"], string> = {
     tasks: "TASKS",
     projects: "PROJECTS",
+    clients: "CLIENTS",
+    brands: "BRANDS",
     actions: "ACTIONS",
     pages: "PAGES",
   };
@@ -537,7 +580,7 @@ function CommandPaletteDialog({
           )}
 
           {(
-            ["tasks", "projects", "actions", "pages"] as CommandItem["group"][]
+            ["tasks", "projects", "clients", "brands", "actions", "pages"] as CommandItem["group"][]
           ).map((groupKey) => {
             const groupItems = grouped[groupKey];
             if (groupItems.length === 0) return null;

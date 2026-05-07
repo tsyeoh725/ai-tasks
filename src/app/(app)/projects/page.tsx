@@ -274,7 +274,10 @@ function ClientRow({ client, onSelect, onUpdate, onDelete }: {
         <div className="hidden sm:flex items-center gap-6 shrink-0 mr-2">
           <div className="text-center">
             <div className="text-sm font-bold text-gray-800 dark:text-gray-200">{client._projectCount ?? 0}</div>
-            <div className="text-[10px] text-gray-400 uppercase tracking-wider">Projects</div>
+            {/* F-71: respect singular/plural so we never render "1 PROJECTS". */}
+            <div className="text-[10px] text-gray-400 uppercase tracking-wider">
+              {(client._projectCount ?? 0) === 1 ? "Project" : "Projects"}
+            </div>
           </div>
           {(client._outstandingBalance ?? 0) > 0 && (
             <div className="text-center">

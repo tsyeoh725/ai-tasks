@@ -1,9 +1,11 @@
 import { db } from "@/db";
-import { tasks, projects, teamMembers } from "@/db/schema";
-import { and, eq, or, isNull, inArray, gte, lt } from "drizzle-orm";
+import { tasks } from "@/db/schema";
+import { and, eq, or, inArray, gte, lt } from "drizzle-orm";
 import { getSessionUser, unauthorized } from "@/lib/session";
 import { streamAiResponse, isAiConfigured } from "@/lib/ai";
 import { NextResponse } from "next/server";
+import { resolveWorkspaceForUser } from "@/lib/workspace";
+import { getAccessibleProjects } from "@/lib/queries/projects";
 
 // ─── Jarvis: personal AI overview for the dashboard ──────────────────────────
 // POST: stream an AI response with full workspace context
@@ -16,20 +18,20 @@ function startOfDay(d = new Date()) {
 }
 
 async function getContext(userId: string) {
-  // Get all accessible project ids
-  const userTeams = await db.query.teamMembers.findMany({
-    where: eq(teamMembers.userId, userId),
-    columns: { teamId: true },
-  });
-  const teamIds = userTeams.map((t) => t.teamId);
-  const projectConds = [and(eq(projects.ownerId, userId), isNull(projects.teamId))];
-  if (teamIds.length > 0) projectConds.push(inArray(projects.teamId, teamIds));
-
-  const projectList = await db.query.projects.findMany({
-    where: or(...projectConds),
-    columns: { id: true, name: true, color: true, icon: true, category: true, campaign: true },
-    limit: 100,
-  });
+  // F-16: scope project context to the active workspace so Jarvis's "you have
+  // N projects" matches what the user sees everywhere else. Previously this
+  // route pulled the union of personal + every team membership which let
+  // Jarvis announce "9 projects" while the dashboard listed 3.
+  const ws = await resolveWorkspaceForUser(userId);
+  const projectListAll = await getAccessibleProjects(userId, ws);
+  const projectList = projectListAll.map((p) => ({
+    id: p.id,
+    name: p.name,
+    color: p.color,
+    icon: p.icon,
+    category: p.category,
+    campaign: p.campaign,
+  }));
   const projectIds = projectList.map((p) => p.id);
 
   if (projectIds.length === 0) {

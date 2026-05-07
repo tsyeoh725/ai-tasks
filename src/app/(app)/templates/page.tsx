@@ -482,9 +482,11 @@ export default function TemplatesPage() {
       {loading ? (
         <p className="text-muted-foreground">Loading templates...</p>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/40 p-6 text-center">
-          <p className="text-sm font-medium text-gray-700 mb-1">No saved templates yet</p>
-          <p className="text-xs text-gray-500">
+        // F-61: explicit dark mode background + text colors so the empty
+        // state isn't light grey on a dark canvas.
+        <div className="rounded-xl border-2 border-dashed border-gray-200 dark:border-white/10 bg-gray-50/40 dark:bg-white/[0.02] p-6 text-center">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">No saved templates yet</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
             Pick a starter above, or click <span className="font-semibold">+ New Template</span> to create your own.
           </p>
         </div>

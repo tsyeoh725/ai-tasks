@@ -126,7 +126,10 @@ export async function clearAuditAnthropicKey(): Promise<void> {
 
 /** Status object for the Settings UI — never returns the raw key. */
 export type AiKeySource = "db" | "env" | "legacy_db" | "legacy_env" | "none";
-export type AiKeyStatus = { configured: boolean; source: AiKeySource; lastFour: string | null };
+// F-10/F-66: drop `lastFour`. Even four characters of an API key narrows
+// guess space and provides recon material for an attacker; only the
+// configured/not-configured boolean is needed by the UI.
+export type AiKeyStatus = { configured: boolean; source: AiKeySource };
 export type AiKeysStatus = {
   jarvis: AiKeyStatus;
   audit: AiKeyStatus;
@@ -139,16 +142,15 @@ async function resolveStatus(
   legacyDbKey: ConfigKey,
   legacyEnvVar: string,
 ): Promise<AiKeyStatus> {
-  const lastFour = (s: string | null) => (s ? s.slice(-4) : null);
   const splitDb = await readSecret(splitDbKey);
-  if (splitDb) return { configured: true, source: "db", lastFour: lastFour(splitDb) };
+  if (splitDb) return { configured: true, source: "db" };
   const splitEnv = process.env[splitEnvVar] ?? null;
-  if (splitEnv) return { configured: true, source: "env", lastFour: lastFour(splitEnv) };
+  if (splitEnv) return { configured: true, source: "env" };
   const legacyDb = await readSecret(legacyDbKey);
-  if (legacyDb) return { configured: true, source: "legacy_db", lastFour: lastFour(legacyDb) };
+  if (legacyDb) return { configured: true, source: "legacy_db" };
   const legacyEnv = process.env[legacyEnvVar] ?? null;
-  if (legacyEnv) return { configured: true, source: "legacy_env", lastFour: lastFour(legacyEnv) };
-  return { configured: false, source: "none", lastFour: null };
+  if (legacyEnv) return { configured: true, source: "legacy_env" };
+  return { configured: false, source: "none" };
 }
 
 export async function getAiKeysStatus(): Promise<AiKeysStatus> {

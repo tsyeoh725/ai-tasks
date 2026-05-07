@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Megaphone,
   Loader2,
@@ -77,11 +77,26 @@ type AdHealth = "kill" | "warning" | "healthy" | "winner" | "neutral";
 type Thresholds = BrandData["config"]["thresholds"];
 
 function getAdHealth(ad: AdData, t: Thresholds): AdHealth {
-  // Without any thresholds we can't classify an ad — showing "HEALTHY" in
-  // that case is a lie. Surface "neutral" (NO DATA) so the user knows the
-  // brand still needs CPL/CTR/Frequency targets configured.
+  // F-06: previously returned "NO DATA" whenever a brand had no thresholds
+  // configured, which buckets every running ad into neutral even when it has
+  // real spend, leads, and a clean CPL. The new policy:
+  //
+  //   1. If we have NO performance data at all (no spend, impressions,
+  //      clicks, or leads), it really is NO DATA. Keep "neutral".
+  //   2. If we have data but no thresholds, default to "healthy" — the ad is
+  //      delivering, we just don't have a target to grade it against. The
+  //      "configure thresholds" prompt belongs in the brand settings, not on
+  //      every ad tile.
+  //   3. With thresholds present, run the original kill/warning/winner logic.
+  const hasAnyData =
+    ad.spend > 0 ||
+    ad.impressions > 0 ||
+    ad.clicks > 0 ||
+    ad.leads > 0;
+  if (!hasAnyData) return "neutral";
+
   const hasThresholds = !!(t.cplMax || t.ctrMin || t.frequencyMax);
-  if (!hasThresholds) return "neutral";
+  if (!hasThresholds) return "healthy";
 
   if (
     t.cplMax &&
@@ -106,8 +121,6 @@ function getAdHealth(ad: AdData, t: Thresholds): AdHealth {
   if (t.frequencyMax && ad.frequency !== null && ad.frequency > t.frequencyMax)
     b++;
   if (b > 0) return "warning";
-  if (ad.cpl === null && ad.ctr === null && ad.frequency === null)
-    return "neutral";
   return "healthy";
 }
 
@@ -417,16 +430,25 @@ export default function AdsPage() {
       }
     );
   }
-  function getCostLabel(bid: string) {
-    return brands.find((b) => b.id === bid)?.config?.costMetric?.label || "CPL";
+  function getCostLabel(bid: string): string | null {
+    return brands.find((b) => b.id === bid)?.config?.costMetric?.label || null;
   }
 
-  const displayCostLabel =
+  // F-55: keep the cost-metric label stable even when data is empty or the
+  // brand list is still loading. Falling back to a hard-coded "CPL" caused
+  // the header to flip from "CPMC" → "CPL" → "CPMC" between renders for a
+  // brand whose configured metric was CPMC. Now we hold the last known good
+  // value in a ref so the label never appears to change because of empty
+  // data alone.
+  const lastCostLabelRef = useRef<string>("Cost");
+  const computedCostLabel =
     selectedBrand !== "all"
       ? getCostLabel(selectedBrand)
       : brands[0]
         ? getCostLabel(brands[0].id)
-        : "CPL";
+        : null;
+  if (computedCostLabel) lastCostLabelRef.current = computedCostLabel;
+  const displayCostLabel = lastCostLabelRef.current;
 
   // Conversion-count noun for the summary "Leads" tile. Single-brand view
   // uses that brand's plural action ("purchases", "link clicks"). All-brands
@@ -529,34 +551,67 @@ export default function AdsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-2 h-9">
-            <CalendarIcon className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
-            />
-            <span className="text-xs text-gray-400">→</span>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
-            />
-            <div className="flex gap-0.5 ml-1 border-l border-gray-200 dark:border-white/10 pl-1">
-              {[7, 30, 90].map((d) => (
-                <Button
-                  key={d}
-                  onClick={() => setDatePreset(d)}
-                  variant="ghost"
-                  size="xs"
+          {(() => {
+            // F-54: surface a clear validation message when From > To. The
+            // existing inputs accepted the inverted range silently, returning
+            // empty data and confusing the user. We render the input row in
+            // a wrapper that shows the warning underneath.
+            const rangeInverted = Boolean(
+              dateFrom && dateTo && dateFrom > dateTo,
+            );
+            return (
+              <div>
+                <div
+                  className={
+                    "flex items-center gap-1.5 rounded-xl border bg-white dark:bg-white/5 px-2 h-9 " +
+                    (rangeInverted
+                      ? "border-red-400 dark:border-red-500"
+                      : "border-gray-200 dark:border-white/10")
+                  }
                 >
-                  {d}D
-                </Button>
-              ))}
-            </div>
-          </div>
+                  <CalendarIcon className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    // F-54: cap the From input's `max` to dateTo so the date
+                    // picker itself prevents picking a later "from" date.
+                    max={dateTo || undefined}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    aria-invalid={rangeInverted}
+                    className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
+                  />
+                  <span className="text-xs text-gray-400">→</span>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    // F-54: cap the To input's `min` to dateFrom for the
+                    // reverse direction.
+                    min={dateFrom || undefined}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    aria-invalid={rangeInverted}
+                    className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
+                  />
+                  <div className="flex gap-0.5 ml-1 border-l border-gray-200 dark:border-white/10 pl-1">
+                    {[7, 30, 90].map((d) => (
+                      <Button
+                        key={d}
+                        onClick={() => setDatePreset(d)}
+                        variant="ghost"
+                        size="xs"
+                      >
+                        {d}D
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                {rangeInverted && (
+                  <p className="text-[11px] text-red-600 dark:text-red-400 mt-1 ml-2">
+                    From date is after To date — pick a valid range.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           <Select
             value={selectedBrand}
@@ -807,7 +862,7 @@ export default function AdsPage() {
         ad={detailAd}
         onClose={() => setDetailAd(null)}
         thresholds={detailAd ? getThresholds(detailAd.brandId) : null}
-        costLabel={detailAd ? getCostLabel(detailAd.brandId) : "CPL"}
+        costLabel={(detailAd ? getCostLabel(detailAd.brandId) : "CPL") ?? "CPL"}
         health={
           detailAd
             ? getAdHealth(detailAd, getThresholds(detailAd.brandId))
@@ -957,8 +1012,13 @@ function TileMetricCell({
       : cell.direction === "lower-better"
         ? TrendingUp
         : TrendingDown;
+  // F-56: full text on hover for truncated values, so users can read the
+  // whole figure (e.g. "RM17,234.50") without resizing the card.
   return (
-    <div className="rounded-xl bg-gray-50 dark:bg-white/5 px-2.5 py-2 min-w-0">
+    <div
+      className="rounded-xl bg-gray-50 dark:bg-white/5 px-2.5 py-2 min-w-0"
+      title={`${cell.label}: ${cell.display}${cell.targetDisplay ? ` (target ${cell.targetDisplay})` : ""}`}
+    >
       <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium truncate">
         {cell.label}
       </p>

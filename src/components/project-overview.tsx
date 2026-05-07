@@ -484,6 +484,10 @@ export function ProjectOverview({ project }: { project: ProjectDetail }) {
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter((t) => t.status === "done").length;
   const inProgressTasks = tasks.filter((t) => t.status === "in_progress").length;
+  // F-28: surface To Do tasks too — without it, a project with mostly-todo
+  // tasks would look like (Total 8 / Completed 7 / In Progress 0 / Overdue 0)
+  // and users couldn't see where the 8th task lived.
+  const todoTasks = tasks.filter((t) => t.status === "todo").length;
   const overdueTasks = tasks.filter(
     (t) => t.dueDate && new Date(t.dueDate) < now && t.status !== "done",
   ).length;
@@ -494,10 +498,12 @@ export function ProjectOverview({ project }: { project: ProjectDetail }) {
     <div className="max-w-6xl mx-auto p-6 space-y-6">
 
       {/* ── Stat cards ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* F-28: 5 tiles now (added "To Do") so every status is visible. */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <StatCard label="Total Tasks" value={totalTasks} icon={TrendingUp} accent="border-l-gray-300" />
-        <StatCard label="Completed" value={completedTasks} icon={CheckCircle2} accent="border-l-green-500" />
+        <StatCard label="To Do" value={todoTasks} icon={Clock} accent="border-l-slate-400" />
         <StatCard label="In Progress" value={inProgressTasks} icon={Clock} accent="border-l-blue-500" />
+        <StatCard label="Completed" value={completedTasks} icon={CheckCircle2} accent="border-l-green-500" />
         <StatCard label="Overdue" value={overdueTasks} icon={AlertTriangle} accent="border-l-red-500" />
       </div>
 

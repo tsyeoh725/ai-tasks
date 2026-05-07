@@ -253,14 +253,16 @@ function ToolbarButton({
   active: boolean;
   onClick: () => void;
 }) {
+  // F-44: real button affordance — visible idle background, border, and
+  // hover state so the toolbar reads as buttons rather than plain text.
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
+      className={`min-w-7 h-7 px-2 text-xs font-semibold rounded-md border transition-colors ${
         active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+          ? "bg-primary text-primary-foreground border-primary shadow-sm"
+          : "bg-background text-foreground border-border hover:bg-accent hover:text-accent-foreground hover:border-accent-foreground/20"
       }`}
     >
       {children}
