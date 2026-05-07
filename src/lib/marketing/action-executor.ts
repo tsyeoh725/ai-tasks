@@ -17,9 +17,12 @@ import {
   adDailyInsights,
   marketingAuditLog,
 } from "@/db/schema";
-import * as metaApi from "@/lib/marketing/meta-api";
-import { resolveMetaAccessToken } from "@/lib/marketing/meta-token";
 import { log } from "@/lib/marketing/logger";
+import {
+  buildPlatformContext,
+  getAdPlatform,
+} from "@/lib/ad-platforms/registry";
+import type { PlatformContext } from "@/lib/ad-platforms/types";
 import type {
   BrandConfig,
   Recommendation,
@@ -70,36 +73,9 @@ async function logAudit(
   }
 }
 
-/**
- * Resolve the Meta access token for a brand.
- *
- * FLAGGED: the current `brands` schema does NOT have a `metaAccessToken`
- * column. Until one is added, we fall back to the `META_ACCESS_TOKEN` env
- * var (same as Jarvis). Once the schema gains a per-brand token column, this
- * helper can be tightened to require it.
- */
-async function getAccessTokenForBrand(brandId: string): Promise<string> {
-  const brand = await db.query.brands.findFirst({ where: eq(brands.id, brandId) });
-  if (!brand) throw new Error(`Brand not found: ${brandId}`);
-
-  // Use the same resolver health/sync use: brand.metaAccessToken (reserved
-  // for future per-brand keys) → globalSettings.meta_access_token (set via
-  // Settings → Meta Ads UI) → META_ACCESS_TOKEN env. Previously this
-  // function only checked the brand column + env, so approvals failed even
-  // though the user had set a token through Settings.
-  const brandLike = brand as unknown as { metaAccessToken?: string | null; userId: string };
-  const token = await resolveMetaAccessToken(brandLike);
-  if (!token) {
-    throw new Error(
-      `No Meta access token for brand ${brandId} — set one in Settings → Meta Ads, or via META_ACCESS_TOKEN env.`,
-    );
-  }
-  return token;
-}
-
 async function executeKillOrPause(
   recommendation: Recommendation,
-  accessToken: string,
+  ctx: PlatformContext,
 ): Promise<ActionResult> {
   if (!recommendation.adId) {
     return { success: false, action: recommendation.action, error: "No adId provided" };
@@ -112,7 +88,11 @@ async function executeKillOrPause(
 
   const adRow = ad as unknown as { metaAdId: string; status: string };
   const beforeState = { status: adRow.status };
-  await metaApi.updateAdStatus(adRow.metaAdId, "PAUSED", accessToken);
+  await getAdPlatform(recommendation.platform).updateAdStatus(
+    ctx,
+    adRow.metaAdId,
+    "PAUSED",
+  );
 
   await db.update(metaAds).set({ status: "PAUSED" }).where(eq(metaAds.id, recommendation.adId));
 
@@ -127,7 +107,7 @@ async function executeKillOrPause(
 
 async function executeBoostBudget(
   recommendation: Recommendation,
-  accessToken: string,
+  ctx: PlatformContext,
   overrideBudget: number | null = null,
 ): Promise<ActionResult> {
   if (!recommendation.adSetId) {
@@ -179,7 +159,11 @@ async function executeBoostBudget(
   if (adSetBudget !== null && adSetBudget > 0) {
     const newBudget = project(adSetBudget);
     const beforeState = { dailyBudget: adSetBudget, level: "ad_set" };
-    await metaApi.updateAdSetBudget(adSetRow.metaAdsetId, newBudget, accessToken);
+    await getAdPlatform(recommendation.platform).updateAdSetBudget(
+      ctx,
+      adSetRow.metaAdsetId,
+      newBudget,
+    );
     await db.update(metaAdSets).set({ dailyBudget: newBudget }).where(eq(metaAdSets.id, recommendation.adSetId));
     return {
       success: true,
@@ -193,7 +177,12 @@ async function executeBoostBudget(
   if (campaign && campaignDailyBudget !== null && campaignDailyBudget > 0) {
     const newBudget = project(campaignDailyBudget);
     const beforeState = { dailyBudget: campaignDailyBudget, level: "campaign" };
-    await metaApi.updateCampaignBudget(campaign.metaCampaignId, newBudget, "daily", accessToken);
+    await getAdPlatform(recommendation.platform).updateCampaignBudget(
+      ctx,
+      campaign.metaCampaignId,
+      newBudget,
+      "daily",
+    );
     await db.update(metaCampaigns).set({ dailyBudget: newBudget }).where(eq(metaCampaigns.id, campaign.id));
     return {
       success: true,
@@ -207,7 +196,12 @@ async function executeBoostBudget(
   if (campaign && campaignLifetimeBudget !== null && campaignLifetimeBudget > 0) {
     const newBudget = project(campaignLifetimeBudget);
     const beforeState = { lifetimeBudget: campaignLifetimeBudget, level: "campaign" };
-    await metaApi.updateCampaignBudget(campaign.metaCampaignId, newBudget, "lifetime", accessToken);
+    await getAdPlatform(recommendation.platform).updateCampaignBudget(
+      ctx,
+      campaign.metaCampaignId,
+      newBudget,
+      "lifetime",
+    );
     await db.update(metaCampaigns).set({ lifetimeBudget: newBudget }).where(eq(metaCampaigns.id, campaign.id));
     return {
       success: true,
@@ -223,7 +217,7 @@ async function executeBoostBudget(
 
 async function executeDuplicate(
   recommendation: Recommendation,
-  accessToken: string,
+  ctx: PlatformContext,
 ): Promise<ActionResult> {
   if (!recommendation.adId || !recommendation.adSetId) {
     return { success: false, action: "duplicate", error: "No adId or adSetId provided" };
@@ -238,7 +232,13 @@ async function executeDuplicate(
   const metaAdId = (ad as unknown as { metaAdId: string }).metaAdId;
   const metaAdsetId = (adSet as unknown as { metaAdsetId: string }).metaAdsetId;
 
-  const result = await metaApi.duplicateAd(metaAdId, metaAdsetId, accessToken);
+  // Adapter return is typed as `unknown` (see AdPlatform interface comment).
+  // The Meta impl returns `{ copied_ad_id?: string }` — cast at the boundary.
+  const result = (await getAdPlatform(recommendation.platform).duplicateAd(
+    ctx,
+    metaAdId,
+    { targetAdSetId: metaAdsetId },
+  )) as { copied_ad_id?: string } | undefined;
   return {
     success: true,
     action: "duplicate",
@@ -421,19 +421,22 @@ export async function executeRecommendation(
   }
 
   try {
-    const accessToken = await getAccessTokenForBrand(recommendation.brandId);
+    const ctx = await buildPlatformContext(
+      recommendation.platform,
+      recommendation.brandId,
+    );
 
     let result: ActionResult;
     switch (recommendation.action) {
       case "kill":
       case "pause":
-        result = await executeKillOrPause(recommendation, accessToken);
+        result = await executeKillOrPause(recommendation, ctx);
         break;
       case "boost_budget":
-        result = await executeBoostBudget(recommendation, accessToken, overrideBudget);
+        result = await executeBoostBudget(recommendation, ctx, overrideBudget);
         break;
       case "duplicate":
-        result = await executeDuplicate(recommendation, accessToken);
+        result = await executeDuplicate(recommendation, ctx);
         break;
       default:
         result = {
