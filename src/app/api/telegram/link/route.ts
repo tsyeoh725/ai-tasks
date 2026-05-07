@@ -27,7 +27,7 @@ export async function POST() {
   const user = await getSessionUser();
   if (!user) return unauthorized();
 
-  const code = generateLinkCode(user.id);
+  const code = await generateLinkCode(user.id);
 
   return NextResponse.json({
     code,

@@ -1,7 +1,12 @@
 import { Bot } from "grammy";
 import { db } from "@/db";
-import { telegramLinks, tasks, taskComments } from "@/db/schema";
-import { eq, and, ne } from "drizzle-orm";
+import {
+  telegramLinkCodes,
+  telegramLinks,
+  tasks,
+  taskComments,
+} from "@/db/schema";
+import { eq, and, ne, lt } from "drizzle-orm";
 import { generateAiResponse } from "@/lib/ai";
 import { v4 as uuid } from "uuid";
 
@@ -10,14 +15,28 @@ let bot: Bot | null = null;
 // the same getMe round-trip instead of racing.
 let botInitPromise: Promise<Bot | null> | null = null;
 
-// Pending link codes: code -> userId
-const pendingLinks = new Map<string, string>();
+const LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-export function generateLinkCode(userId: string): string {
+/**
+ * Generate a short-lived linking code and persist it in `telegram_link_codes`.
+ *
+ * Earlier versions stored codes in an in-memory Map, which lost every code on
+ * container restart — meaning every deploy left users staring at "Welcome to
+ * AI Tasks Bot!" instead of "Successfully linked!". DB-backed codes survive
+ * restarts and span multiple processes if we ever scale out.
+ */
+export async function generateLinkCode(userId: string): Promise<string> {
+  // Opportunistic GC of expired rows so the table doesn't grow forever.
+  // Runs on every code generation — cheap because the index on expires_at
+  // makes it a quick range delete.
+  await db.delete(telegramLinkCodes).where(lt(telegramLinkCodes.expiresAt, new Date()));
+
   const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-  pendingLinks.set(code, userId);
-  // Auto-expire after 10 minutes
-  setTimeout(() => pendingLinks.delete(code), 10 * 60 * 1000);
+  await db.insert(telegramLinkCodes).values({
+    code,
+    userId,
+    expiresAt: new Date(Date.now() + LINK_CODE_TTL_MS),
+  });
   return code;
 }
 
@@ -43,9 +62,20 @@ export async function getTelegramBot(): Promise<Bot | null> {
   b.command("start", async (ctx) => {
     const code = ctx.match?.trim();
 
-    if (code && pendingLinks.has(code)) {
-      const userId = pendingLinks.get(code)!;
-      pendingLinks.delete(code);
+    // Resolve the code through the DB. Returns the row only if the code
+    // exists and hasn't expired — anything else falls through to the
+    // generic welcome message.
+    const codeRow = code
+      ? await db.query.telegramLinkCodes.findFirst({
+          where: eq(telegramLinkCodes.code, code),
+        })
+      : null;
+    const codeValid = codeRow && codeRow.expiresAt.getTime() > Date.now();
+
+    if (codeRow && codeValid) {
+      const userId = codeRow.userId;
+      // One-shot: consume the code immediately so it can't be replayed.
+      await db.delete(telegramLinkCodes).where(eq(telegramLinkCodes.code, code!));
 
       const chatId = ctx.chat.id.toString();
       const username = ctx.from?.username || null;
@@ -69,6 +99,10 @@ export async function getTelegramBot(): Promise<Bot | null> {
       }
 
       await ctx.reply("Successfully linked! You will now receive task notifications here.\n\nCommands:\n/task <id> <message> - Chat with AI about a task\n/digest - Get your daily digest\n/help - Show commands");
+    } else if (code) {
+      // User typed a code but it didn't match — distinguish from "no code at
+      // all" so they know to generate a new one.
+      await ctx.reply("That code is invalid or has expired. Generate a fresh one in Settings → Link Telegram, then send /start <new_code>.");
     } else {
       await ctx.reply("Welcome to AI Tasks Bot!\n\nTo link your account, go to Settings in the web app and click 'Link Telegram'.\n\nIf you already have a code, send:\n/start YOUR_CODE");
     }

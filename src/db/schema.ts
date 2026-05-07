@@ -351,6 +351,18 @@ export const telegramLinks = sqliteTable("telegram_links", {
   digestTime: text("digest_time").notNull().default("09:00"),
 });
 
+// Short-lived codes a user generates from the Settings UI to authorize a
+// Telegram chat to act on their behalf. Replaces the previous in-memory
+// Map, which lost every code on container restart and made `/start <code>`
+// fail silently after every deploy. 10-minute TTL enforced in the /start
+// handler.
+export const telegramLinkCodes = sqliteTable("telegram_link_codes", {
+  code: text("code").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
 // ============ DOCUMENTS ============
 export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(),

@@ -43,6 +43,13 @@
       "when": 1778198400000,
       "tag": "0005_add_ai_usage_log",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1778457600000,
+      "tag": "0006_add_telegram_link_codes",
+      "breakpoints": true
     }
   ]
 }
