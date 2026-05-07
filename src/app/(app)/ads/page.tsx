@@ -385,6 +385,16 @@ export default function AdsPage() {
     health: getAdHealth(ad, getThresholds(ad.brandId)),
   }));
 
+  // Bucket counts so the chip filters in the toolbar can show e.g. "Kill 2"
+  // without re-walking the ad list per chip render.
+  const healthCounts = adsWithHealth.reduce(
+    (acc, entry) => {
+      acc[entry.health] = (acc[entry.health] || 0) + 1;
+      return acc;
+    },
+    {} as Record<AdHealth, number>,
+  );
+
   const filteredAds = adsWithHealth.filter((entry) => {
     if (healthFilter !== "all" && entry.health !== healthFilter) return false;
     return true;
@@ -468,7 +478,6 @@ export default function AdsPage() {
           <Button
             onClick={handleRunAudit}
             disabled={syncingAll || auditing || brands.length === 0}
-            variant="outline"
             size="sm"
           >
             {auditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
@@ -503,75 +512,49 @@ export default function AdsPage() {
         </div>
       )}
 
-      {/* Date range controls */}
-      <Card>
-        <CardContent className="py-3 flex items-center gap-2 flex-wrap">
-          <CalendarIcon className="w-4 h-4 text-gray-400 shrink-0" />
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="w-40 font-mono text-xs"
-          />
-          <span className="text-xs text-gray-400">to</span>
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="w-40 font-mono text-xs"
-          />
-          <div className="flex gap-1">
-            {[7, 14, 30, 90].map((d) => (
-              <Button
-                key={d}
-                onClick={() => setDatePreset(d)}
-                variant="ghost"
-                size="xs"
-              >
-                {d}D
-              </Button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Filters / sort / group */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
-            Health
-          </span>
-          <Select
-            value={healthFilter}
-            onValueChange={(v) => v && setHealthFilter(v as AdHealth | "all")}
-          >
-            <SelectTrigger className="w-32 h-8">
-              <SelectValue>
-                {healthFilter === "all"
-                  ? "All"
-                  : HEALTH_STYLES[healthFilter].label}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="kill">Kill</SelectItem>
-              <SelectItem value="warning">Warning</SelectItem>
-              <SelectItem value="healthy">Healthy</SelectItem>
-              <SelectItem value="winner">Winner</SelectItem>
-              <SelectItem value="neutral">No data</SelectItem>
-            </SelectContent>
-          </Select>
+      {/* Toolbar: date + sort + group on one tight row, no card frame.
+          Replaces the previous date Card + filters row (two stacked sections).
+          Health filter moved out — it's now chips inside the metric card below
+          since "find ads needing action" is the primary task here. */}
+      <div className="flex items-center gap-2 flex-wrap text-sm">
+        <CalendarIcon className="w-4 h-4 text-gray-400 shrink-0" />
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          className="w-36 font-mono text-xs h-8"
+        />
+        <span className="text-xs text-gray-400">to</span>
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          className="w-36 font-mono text-xs h-8"
+        />
+        <div className="flex gap-0.5 ml-1">
+          {[7, 14, 30, 90].map((d) => (
+            <Button
+              key={d}
+              onClick={() => setDatePreset(d)}
+              variant="ghost"
+              size="xs"
+            >
+              {d}D
+            </Button>
+          ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
+        <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden />
+
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-400 uppercase tracking-wider">
             Sort
           </span>
           <Select
             value={sortKey}
             onValueChange={(v) => v && setSortKey(v as SortKey)}
           >
-            <SelectTrigger className="w-32 h-8">
+            <SelectTrigger className="w-28 h-8">
               <SelectValue>{sortKey}</SelectValue>
             </SelectTrigger>
             <SelectContent>
@@ -584,15 +567,15 @@ export default function AdsPage() {
           </Select>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-gray-400 uppercase tracking-wider">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-gray-400 uppercase tracking-wider">
             Group
           </span>
           <Select
             value={groupKey}
             onValueChange={(v) => v && setGroupKey(v as GroupKey)}
           >
-            <SelectTrigger className="w-32 h-8">
+            <SelectTrigger className="w-28 h-8">
               <SelectValue>
                 {groupKey === "none" ? "None" : groupKey}
               </SelectValue>
@@ -611,34 +594,79 @@ export default function AdsPage() {
         </span>
       </div>
 
-      {/* Dashboard summary — totals across filteredAds */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <SummaryCard
-          label="Spend"
-          value={`RM${summary.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          sub={`${filteredAds.length} ad${filteredAds.length === 1 ? "" : "s"}`}
-        />
-        <SummaryCard
-          label="Leads"
-          value={summary.leads.toLocaleString()}
-          sub={`across ${filteredAds.length} ad${filteredAds.length === 1 ? "" : "s"}`}
-        />
-        <SummaryCard
-          label={displayCostLabel}
-          value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
-          sub="weighted (spend / leads)"
-        />
-        <SummaryCard
-          label="CTR"
-          value={totalCtr !== null ? `${totalCtr.toFixed(2)}%` : "—"}
-          sub="weighted (clicks / impressions)"
-        />
-        <SummaryCard
-          label="Frequency"
-          value={avgFreq !== null ? avgFreq.toFixed(2) : "—"}
-          sub={`avg of ${summary.freqCount} ad${summary.freqCount === 1 ? "" : "s"}`}
-        />
-      </div>
+      {/* Single combined card: metric strip on top + health-filter chips on
+          bottom. Replaces the old 5 separate stat cards + Health dropdown.
+          The chips show counts so the operator can see at a glance "2 ads
+          need killing" without expanding the dropdown. */}
+      <Card>
+        <CardContent className="p-0">
+          <div className="px-4 md:px-6 py-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3 border-b border-slate-100">
+            <CompactMetric
+              label="Spend"
+              value={`RM${summary.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            />
+            <CompactMetric label="Leads" value={summary.leads.toLocaleString()} />
+            <CompactMetric
+              label={displayCostLabel}
+              value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
+            />
+            <CompactMetric
+              label="CTR"
+              value={totalCtr !== null ? `${totalCtr.toFixed(2)}%` : "—"}
+            />
+            <CompactMetric
+              label="Frequency"
+              value={avgFreq !== null ? avgFreq.toFixed(2) : "—"}
+            />
+          </div>
+          <div className="px-4 md:px-6 py-3 flex items-center gap-1.5 flex-wrap bg-slate-50/60">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider mr-1">
+              Filter
+            </span>
+            <HealthChip
+              label="All"
+              count={adsWithHealth.length}
+              active={healthFilter === "all"}
+              onClick={() => setHealthFilter("all")}
+            />
+            <HealthChip
+              label="Kill"
+              count={healthCounts.kill || 0}
+              tone="kill"
+              active={healthFilter === "kill"}
+              onClick={() => setHealthFilter("kill")}
+            />
+            <HealthChip
+              label="Warning"
+              count={healthCounts.warning || 0}
+              tone="warning"
+              active={healthFilter === "warning"}
+              onClick={() => setHealthFilter("warning")}
+            />
+            <HealthChip
+              label="Healthy"
+              count={healthCounts.healthy || 0}
+              tone="healthy"
+              active={healthFilter === "healthy"}
+              onClick={() => setHealthFilter("healthy")}
+            />
+            <HealthChip
+              label="Winner"
+              count={healthCounts.winner || 0}
+              tone="winner"
+              active={healthFilter === "winner"}
+              onClick={() => setHealthFilter("winner")}
+            />
+            <HealthChip
+              label="No data"
+              count={healthCounts.neutral || 0}
+              tone="neutral"
+              active={healthFilter === "neutral"}
+              onClick={() => setHealthFilter("neutral")}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Content */}
       {loading ? (
@@ -993,14 +1021,105 @@ function groupBy<T>(
   return out;
 }
 
-function SummaryCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+// Inline metric used in the combined Card at the top of the audit. Lighter
+// weight than the previous SummaryCard (no border, no subtitle) so 5 of these
+// in a row don't fight the surrounding chrome for attention.
+function CompactMetric({ label, value }: { label: string; value: string }) {
   return (
-    <Card>
-      <CardContent className="py-3 px-4">
-        <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">{label}</p>
-        <p className="text-xl font-semibold text-gray-900 mt-0.5 tabular-nums">{value}</p>
-        {sub && <p className="text-[11px] text-gray-400 mt-0.5">{sub}</p>}
-      </CardContent>
-    </Card>
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
+        {label}
+      </p>
+      <p className="text-lg font-semibold text-gray-900 mt-0.5 tabular-nums truncate">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+// Click-to-filter chip with a count badge. `tone === undefined` is the "All"
+// variant (indigo when active, slate when not). The other tones map to the
+// same colour family as the corresponding status badge in the ad row, so the
+// connection between "click Kill chip" and "see Kill-tinted rows" is obvious.
+function HealthChip({
+  label,
+  count,
+  tone,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  tone?: "kill" | "warning" | "healthy" | "winner" | "neutral";
+  active: boolean;
+  onClick: () => void;
+}) {
+  const base =
+    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer border";
+
+  if (tone === undefined) {
+    // "All" chip — indigo when active, slate when not
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(
+          base,
+          active
+            ? "bg-indigo-100 border-indigo-200 text-indigo-800"
+            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50",
+        )}
+      >
+        {label}
+        <span
+          className={cn(
+            "text-[10px] tabular-nums",
+            active ? "text-indigo-600" : "text-slate-400",
+          )}
+        >
+          {count}
+        </span>
+      </button>
+    );
+  }
+
+  const toneStyles = {
+    kill: {
+      activeBg: "bg-red-100 border-red-200 text-red-800",
+      hover: "hover:bg-red-50 hover:border-red-200",
+    },
+    warning: {
+      activeBg: "bg-amber-100 border-amber-200 text-amber-800",
+      hover: "hover:bg-amber-50 hover:border-amber-200",
+    },
+    healthy: {
+      activeBg: "bg-emerald-100 border-emerald-200 text-emerald-800",
+      hover: "hover:bg-emerald-50 hover:border-emerald-200",
+    },
+    winner: {
+      activeBg: "bg-blue-100 border-blue-200 text-blue-800",
+      hover: "hover:bg-blue-50 hover:border-blue-200",
+    },
+    neutral: {
+      activeBg: "bg-slate-200 border-slate-300 text-slate-700",
+      hover: "hover:bg-slate-100 hover:border-slate-200",
+    },
+  } as const;
+
+  const style = toneStyles[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        base,
+        active
+          ? style.activeBg
+          : `bg-white border-slate-200 text-slate-600 ${style.hover}`,
+      )}
+    >
+      {label}
+      <span className="text-[10px] tabular-nums opacity-70">{count}</span>
+    </button>
   );
 }
