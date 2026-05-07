@@ -82,7 +82,18 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     updateData.estimatedHours = updates.estimatedHours === null ? null : Number(updates.estimatedHours);
   }
   if (updates.sortOrder !== undefined) updateData.sortOrder = updates.sortOrder;
-  if (updates.projectId !== undefined) updateData.projectId = updates.projectId;
+  // SL-1: gate the *destination* project too — the source-project check
+  // above only stops you from editing tasks you can't access. Without this
+  // a teammate could move a task into another tenant's project.
+  if (updates.projectId !== undefined) {
+    if (typeof updates.projectId !== "string") {
+      return NextResponse.json({ error: "projectId must be a string" }, { status: 400 });
+    }
+    if (!(await canAccessProject(updates.projectId, user.id!))) {
+      return NextResponse.json({ error: "No access to destination project" }, { status: 403 });
+    }
+    updateData.projectId = updates.projectId;
+  }
   if (updates.clientId !== undefined) updateData.clientId = updates.clientId || null;
   if (updates.sectionId !== undefined) updateData.sectionId = updates.sectionId || null;
   if (updates.taskType !== undefined) updateData.taskType = updates.taskType;

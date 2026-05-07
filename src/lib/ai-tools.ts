@@ -274,7 +274,11 @@ export function getCommandTools(userId: string, userTz: string) {
         const task = await db.query.tasks.findFirst({
           where: eq(tasks.id, taskId),
           with: {
-            project: { columns: { name: true } },
+            // SL-1: must include ownerId+teamId on project for the access
+            // gate below. Previously this fetched only `name` so the
+            // checkProjectAccess guard couldn't run — and the tool returned
+            // tasks from any tenant given the right id.
+            project: { columns: { name: true, ownerId: true, teamId: true } },
             assignee: { columns: { id: true, name: true } },
             createdBy: { columns: { name: true } },
             subtasks: true,
@@ -286,6 +290,9 @@ export function getCommandTools(userId: string, userTz: string) {
           },
         });
         if (!task) return { error: "Task not found" };
+
+        const hasAccess = await checkProjectAccess(userId, task.project);
+        if (!hasAccess) return { error: "Task not accessible" };
 
         return {
           id: task.id,
@@ -485,7 +492,7 @@ export function getCommandTools(userId: string, userTz: string) {
     }),
 
     sendTelegramNotification: tool({
-      description: "Send a Telegram message to a team member. The recipient must have linked their Telegram account.",
+      description: "Send a Telegram message to a team member you share at least one team with. The recipient must have linked their Telegram account.",
       inputSchema: z.object({
         recipientUserId: z.string().describe("User ID of the recipient"),
         message: z.string().describe("Message to send"),
@@ -495,6 +502,30 @@ export function getCommandTools(userId: string, userTz: string) {
           where: eq(users.id, recipientUserId),
         });
         if (!recipient) return { error: "User not found" };
+
+        // SL-1: cross-tenant DM gate. Self-messaging is always allowed
+        // (caller's own linked Telegram). Otherwise the caller and
+        // recipient must share at least one team.
+        if (recipientUserId !== userId) {
+          const callerTeams = await db.query.teamMembers.findMany({
+            where: eq(teamMembers.userId, userId),
+            columns: { teamId: true },
+          });
+          const teamIds = callerTeams.map((t) => t.teamId);
+          if (teamIds.length === 0) {
+            return { error: "Recipient is not a teammate. Cross-tenant DM is disabled." };
+          }
+          const shared = await db.query.teamMembers.findFirst({
+            where: and(
+              eq(teamMembers.userId, recipientUserId),
+              inArray(teamMembers.teamId, teamIds),
+            ),
+            columns: { id: true },
+          });
+          if (!shared) {
+            return { error: "Recipient is not a teammate. Cross-tenant DM is disabled." };
+          }
+        }
 
         try {
           await sendTelegramMessage(recipientUserId, message);
@@ -506,15 +537,43 @@ export function getCommandTools(userId: string, userTz: string) {
     }),
 
     searchUsers: tool({
-      description: "Search for users by name or email. Useful before assigning tasks or sending messages.",
+      description: "Search for users by name or email within your teams. Useful before assigning tasks or sending messages.",
       inputSchema: z.object({
         query: z.string().describe("Search query (name or email)"),
       }),
       execute: async ({ query }) => {
+        // SL-1: scope to teammates. Previously this enumerated the entire
+        // users table — any logged-in user could dump the directory by
+        // issuing repeated `searchUsers("a"), ("b"), ...` calls.
+        const callerTeams = await db.query.teamMembers.findMany({
+          where: eq(teamMembers.userId, userId),
+          columns: { teamId: true },
+        });
+        const teamIds = callerTeams.map((t) => t.teamId);
+
+        // Teamless caller → return only the calling user (so the AI still
+        // has a useful self-reference for "assign to me").
+        if (teamIds.length === 0) {
+          const me = await db.query.users.findFirst({
+            where: eq(users.id, userId),
+            columns: { id: true, name: true, email: true },
+          });
+          return { users: me ? [me] : [], count: me ? 1 : 0 };
+        }
+
+        const teammateIds = await db.query.teamMembers.findMany({
+          where: inArray(teamMembers.teamId, teamIds),
+          columns: { userId: true },
+        });
+        const allowedIds = Array.from(new Set(teammateIds.map((t) => t.userId)));
+
         const result = await db.query.users.findMany({
-          where: or(
-            like(users.name, `%${query}%`),
-            like(users.email, `%${query}%`),
+          where: and(
+            inArray(users.id, allowedIds),
+            or(
+              like(users.name, `%${query}%`),
+              like(users.email, `%${query}%`),
+            ),
           ),
           columns: { id: true, name: true, email: true },
           limit: 10,
@@ -618,8 +677,17 @@ export function getCommandTools(userId: string, userTz: string) {
         category: z.enum(["deep_work", "creative", "admin", "review", "quick_tasks"]).default("deep_work"),
       }),
       execute: async ({ taskId, date, startTime, durationMinutes, category }) => {
-        const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+        const task = await db.query.tasks.findFirst({
+          where: eq(tasks.id, taskId),
+          with: { project: { columns: { ownerId: true, teamId: true } } },
+        });
         if (!task) return { error: "Task not found" };
+        // SL-1: own time blocks don't grant write access to someone else's
+        // task. Block creation here writes a row keyed to `taskId` AND
+        // `userId`; without the gate, calling this for another tenant's
+        // task generates dangling blocks bound to a task they own.
+        const hasAccess = await checkProjectAccess(userId, task.project);
+        if (!hasAccess) return { error: "Task not accessible" };
 
         // Combine date+time and parse as wall-clock in user's tz so blocks
         // land at the user's intended hour regardless of server tz.
@@ -661,6 +729,13 @@ export function getCommandTools(userId: string, userTz: string) {
           with: { project: true },
         });
         if (!task) return { error: "Task not found" };
+
+        // SL-1: gate before mutating. rescheduleTask both writes to the
+        // task row AND deletes timeBlocks scoped to (taskId, userId) — a
+        // cross-tenant call from a malicious prompt would corrupt the
+        // target task's due date and orphan their owner's time blocks.
+        const hasAccess = await checkProjectAccess(userId, task.project);
+        if (!hasAccess) return { error: "Task not accessible" };
 
         const oldDue = task.dueDate ? task.dueDate.toISOString().split("T")[0] : "none";
 
@@ -799,8 +874,15 @@ export function getCommandTools(userId: string, userTz: string) {
         taskId: z.string().describe("Task ID to find new time for"),
       }),
       execute: async ({ taskId }) => {
-        const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+        const task = await db.query.tasks.findFirst({
+          where: eq(tasks.id, taskId),
+          with: { project: { columns: { ownerId: true, teamId: true } } },
+        });
         if (!task) return { error: "Task not found" };
+        // SL-1: read-only on the task itself but leaks task title + due
+        // date in the suggestion payload — gate cross-tenant disclosure.
+        const hasAccess = await checkProjectAccess(userId, task.project);
+        if (!hasAccess) return { error: "Task not accessible" };
 
         const estMinutes = (task.estimatedHours || 1) * 60;
         const today = new Date();
