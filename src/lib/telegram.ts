@@ -32,8 +32,14 @@ const graphemeSegmenter =
 
 function graphemeLength(text: string): number {
   if (!graphemeSegmenter) return text.length;
+  // Counting via Array.from would allocate the whole array — ok for the
+  // sizes we hit but slightly wasteful. The for-of with a counter avoids
+  // that; the seg variable is intentionally unused (we just need the count).
   let n = 0;
-  for (const _ of graphemeSegmenter.segment(text)) n++;
+  for (const seg of graphemeSegmenter.segment(text)) {
+    void seg;
+    n++;
+  }
   return n;
 }
 
