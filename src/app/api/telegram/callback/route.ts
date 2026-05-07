@@ -135,21 +135,31 @@ export async function POST(req: Request) {
   let editSuffix: string;
 
   if (action === "approve") {
-    await db
-      .update(decisionJournal)
-      .set({ guardVerdict: "approved" })
-      .where(eq(decisionJournal.id, journalId));
-
+    // SL-14: execute first, mark approved only on success. The previous
+    // order (approve → execute) was fail-closed-for-retry but fail-open-
+    // for-the-user: if the action threw, the row was already "approved" so
+    // a retry click short-circuited (`entry.guardVerdict !== "pending"`).
+    // The user thought they approved but no Meta action ran, with no way
+    // to recover from Telegram. Now: failure leaves the row as "pending"
+    // so the user can click Approve again. Duplicate execution is guarded
+    // by decisionJournal.actionTaken inside the executor.
     try {
       const result = await executeJournalEntry(journalId, { manualApproval: true });
-      answerText = result.success ? "Approved and executed" : "Approved but action failed";
-      editSuffix = result.success
-        ? "\n\n✅ <b>Approved — action executed</b>"
-        : `\n\n⚠️ <b>Approved — action failed:</b> ${result.error ?? "unknown error"}`;
+      if (result.success) {
+        await db
+          .update(decisionJournal)
+          .set({ guardVerdict: "approved" })
+          .where(eq(decisionJournal.id, journalId));
+        answerText = "Approved and executed";
+        editSuffix = "\n\n✅ <b>Approved — action executed</b>";
+      } else {
+        answerText = "Action failed — leaving as pending so you can retry";
+        editSuffix = `\n\n⚠️ <b>Action failed:</b> ${result.error ?? "unknown error"}\nTap Approve again to retry, or Reject to abandon.`;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      answerText = "Approved but execution threw";
-      editSuffix = `\n\n⚠️ <b>Approved — execution error:</b> ${msg}`;
+      answerText = "Execution threw — leaving as pending so you can retry";
+      editSuffix = `\n\n⚠️ <b>Execution error:</b> ${msg}\nTap Approve again to retry, or Reject to abandon.`;
     }
   } else {
     await db

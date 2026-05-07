@@ -1,6 +1,7 @@
 import { Bot } from "grammy";
 import { randomBytes } from "crypto";
 import { db } from "@/db";
+import { withKeyLock } from "@/lib/per-key-mutex";
 import {
   telegramLinkCodes,
   telegramLinks,
@@ -446,45 +447,56 @@ ${task.description ? `Description: ${task.description}` : ""}`;
       /* non-fatal */
     }
 
+    // SL-14: serialize per-user. Without this, two near-simultaneous webhook
+    // hits on a fresh chat both see `link.activeConversationId === null`,
+    // each insert a new aiConversations row, and each writes their user
+    // turn to a *different* conversation — the second's UPDATE wins, the
+    // first's user message is orphaned. Locking by userId means the second
+    // message sees the first's `activeConversationId` and joins the
+    // existing thread.
     try {
-      // Resolve the active Jarvis conversation for this Telegram link, or
-      // create one. Storing the id on telegramLinks lets follow-up messages
-      // share memory across turns without us hunting through aiConversations.
-      const conv = await getOrCreateJarvisConversation({
-        userId: link.userId,
-        conversationId: link.activeConversationId,
-        label: "Telegram",
-      });
-      // Persist the new conversation id back to the link if it changed
-      // (either created fresh, or stale id rotated). One write per chat
-      // session — not per message.
-      if (conv.isNew || conv.id !== link.activeConversationId) {
-        await db.update(telegramLinks)
-          .set({ activeConversationId: conv.id })
-          .where(eq(telegramLinks.id, link.id));
-      }
+      await withKeyLock(`telegram:user:${link.userId}`, async () => {
+        // Re-read the link inside the lock so we see any
+        // activeConversationId set by a queued earlier message.
+        const fresh = await db.query.telegramLinks.findFirst({
+          where: eq(telegramLinks.id, link.id),
+        });
+        const conv = await getOrCreateJarvisConversation({
+          userId: link.userId,
+          conversationId: fresh?.activeConversationId ?? null,
+          label: "Telegram",
+        });
+        // Persist the new conversation id back to the link if it changed
+        // (either created fresh, or stale id rotated). One write per chat
+        // session — not per message.
+        if (conv.isNew || conv.id !== fresh?.activeConversationId) {
+          await db.update(telegramLinks)
+            .set({ activeConversationId: conv.id })
+            .where(eq(telegramLinks.id, link.id));
+        }
 
-      const result = await chatWithJarvis({
-        userId: link.userId,
-        conversationId: conv.id,
-        message: text,
-        transport: "telegram",
-        // Telegram-specific guidance: no markdown (their parser is fussy),
-        // keep replies tight, and surface a follow-up cue when there's more
-        // to explore. The model is free to break this for hard cases.
-        responseStyle:
-          "Telegram chat. Keep responses tight (ideally under 600 chars). " +
-          "Plain text only — no markdown formatting (Telegram's parser is " +
-          "fussy and we send as plain text). Use line breaks and dashes for " +
-          "lists. If a tool returned a long list, summarize the top items " +
-          "and offer to drill in.",
-      });
+        const result = await chatWithJarvis({
+          userId: link.userId,
+          conversationId: conv.id,
+          message: text,
+          transport: "telegram",
+          // Telegram-specific guidance: no markdown (their parser is fussy),
+          // keep replies tight, and surface a follow-up cue when there's more
+          // to explore. The model is free to break this for hard cases.
+          responseStyle:
+            "Telegram chat. Keep responses tight (ideally under 600 chars). " +
+            "Plain text only — no markdown formatting (Telegram's parser is " +
+            "fussy and we send as plain text). Use line breaks and dashes for " +
+            "lists. If a tool returned a long list, summarize the top items " +
+            "and offer to drill in.",
+        });
 
-      // Telegram caps each message at 4096 chars; split long replies into
-      // chunks so users don't lose the tail.
-      for (const chunk of splitForTelegram(result.text)) {
-        await ctx.reply(chunk);
-      }
+        // Telegram caps each message at 4096 chars; split long replies into
+        // chunks so users don't lose the tail.
+        for (const chunk of splitForTelegram(result.text)) {
+          await ctx.reply(chunk);
+        }
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       console.error("[telegram] chat reply failed:", err);
