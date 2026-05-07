@@ -9,6 +9,9 @@ import {
   Calendar as CalendarIcon,
   RefreshCw,
   ShieldAlert,
+  TrendingDown,
+  TrendingUp,
+  Minus,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,11 +65,9 @@ type BrandData = {
 };
 
 type AdHealth = "kill" | "warning" | "healthy" | "winner" | "neutral";
+type Thresholds = BrandData["config"]["thresholds"];
 
-function getAdHealth(
-  ad: AdData,
-  t: BrandData["config"]["thresholds"],
-): AdHealth {
+function getAdHealth(ad: AdData, t: Thresholds): AdHealth {
   // Without any thresholds we can't classify an ad — showing "HEALTHY" in
   // that case is a lie. Surface "neutral" (NO DATA) so the user knows the
   // brand still needs CPL/CTR/Frequency targets configured.
@@ -96,46 +97,75 @@ function getAdHealth(
   if (t.frequencyMax && ad.frequency !== null && ad.frequency > t.frequencyMax)
     b++;
   if (b > 0) return "warning";
-  // Metrics for at least one threshold are missing → can't classify cleanly.
   if (ad.cpl === null && ad.ctr === null && ad.frequency === null)
     return "neutral";
   return "healthy";
 }
 
+function getBreaches(ad: AdData, t: Thresholds) {
+  return {
+    cplOver: t.cplMax !== null && ad.cpl !== null && ad.cpl > t.cplMax,
+    ctrUnder: t.ctrMin !== null && ad.ctr !== null && ad.ctr < t.ctrMin,
+    freqOver:
+      t.frequencyMax !== null &&
+      ad.frequency !== null &&
+      ad.frequency > t.frequencyMax,
+  };
+}
+
 const HEALTH_STYLES: Record<
   AdHealth,
-  { label: string; badgeVariant: "destructive" | "warning" | "success" | "secondary" | "default"; ring: string }
+  {
+    label: string;
+    badgeVariant:
+      | "destructive"
+      | "warning"
+      | "success"
+      | "secondary"
+      | "default";
+    edge: string; // left-edge accent on tile
+    accent: string; // soft tint background
+    dot: string; // small dot color used in tile header
+  }
 > = {
   kill: {
     label: "KILL",
     badgeVariant: "destructive",
-    ring: "ring-1 ring-red-400/30 bg-red-500/5",
+    edge: "before:bg-red-500",
+    accent: "bg-red-50/50 dark:bg-red-950/20",
+    dot: "bg-red-500",
   },
   warning: {
     label: "WARNING",
     badgeVariant: "warning",
-    ring: "ring-1 ring-amber-400/25 bg-amber-500/5",
+    edge: "before:bg-amber-500",
+    accent: "bg-amber-50/50 dark:bg-amber-950/20",
+    dot: "bg-amber-500",
   },
   healthy: {
     label: "HEALTHY",
     badgeVariant: "success",
-    ring: "ring-1 ring-emerald-400/25 bg-emerald-500/5",
+    edge: "before:bg-emerald-400",
+    accent: "",
+    dot: "bg-emerald-500",
   },
   winner: {
     label: "WINNER",
     badgeVariant: "success",
-    ring: "ring-1 ring-emerald-400/50 bg-emerald-500/10",
+    edge: "before:bg-emerald-500",
+    accent: "bg-emerald-50/60 dark:bg-emerald-950/25",
+    dot: "bg-emerald-500",
   },
   neutral: {
     label: "NO DATA",
     badgeVariant: "secondary",
-    ring: "",
+    edge: "before:bg-slate-300 dark:before:bg-white/15",
+    accent: "",
+    dot: "bg-slate-400",
   },
 };
 
 function daysAgo(n: number) {
-  // Use UTC math so server (UTC) and client (local TZ) compute the same
-  // ISO date string and SSR/hydration agree.
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().split("T")[0];
@@ -151,9 +181,6 @@ type GroupKey = "none" | "brand" | "campaign" | "health";
 const FILTER_STORAGE_KEY = "ads:filters:v1";
 
 export default function AdsPage() {
-  // Filter state is initialized with SSR-stable defaults — anything that
-  // depends on window/URL/Date.toISOString is hydrated in the effect below
-  // to avoid React hydration mismatches.
   const [selectedBrand, setSelectedBrand] = useState("all");
   const [ads, setAds] = useState<AdData[]>([]);
   const [brands, setBrands] = useState<BrandData[]>([]);
@@ -172,9 +199,8 @@ export default function AdsPage() {
   const [detailAd, setDetailAd] = useState<AdData | null>(null);
 
   // Hydrate filter state from sessionStorage / URL after mount. Order:
-  // URL > sessionStorage > defaults. This both fixes the SSR mismatch
-  // (window/Date access in the initializer) and restores filters after
-  // the user navigates away and back during the same browser session.
+  // URL > sessionStorage > defaults. Fixes SSR mismatch from window/Date in
+  // the initializer and restores filters on intra-session navigation.
   useEffect(() => {
     let brandFromUrl: string | null = null;
     try {
@@ -198,6 +224,7 @@ export default function AdsPage() {
       // ignore
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot hydration from URL/sessionStorage on mount; not a subscription
     setSelectedBrand(brandFromUrl ?? saved.selectedBrand ?? "all");
     setDateFrom(saved.dateFrom ?? daysAgo(30));
     setDateTo(saved.dateTo ?? todayISO());
@@ -207,8 +234,6 @@ export default function AdsPage() {
     setHydrated(true);
   }, []);
 
-  // Persist filter changes back to sessionStorage so the user can navigate
-  // away and return without losing context.
   useEffect(() => {
     if (!hydrated) return;
     try {
@@ -226,7 +251,15 @@ export default function AdsPage() {
     } catch {
       // ignore
     }
-  }, [hydrated, selectedBrand, dateFrom, dateTo, healthFilter, sortKey, groupKey]);
+  }, [
+    hydrated,
+    selectedBrand,
+    dateFrom,
+    dateTo,
+    healthFilter,
+    sortKey,
+    groupKey,
+  ]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -265,8 +298,6 @@ export default function AdsPage() {
   }, [selectedBrand, dateFrom, dateTo]);
 
   useEffect(() => {
-    // Wait for hydration so the empty-string defaults don't cause a wasted
-    // first request with startDate="".
     if (!hydrated) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetch on mount/dep change; not migrating to Suspense
     fetchData();
@@ -281,8 +312,6 @@ export default function AdsPage() {
     if (syncingAll) return;
     setSyncingAll(true);
     setStatus(null);
-    // Kick off all brand syncs in parallel as background jobs. The status
-    // badge in the header tracks progress; we don't await completion.
     const total = brands.length;
     let queued = 0;
     let failed = 0;
@@ -311,10 +340,6 @@ export default function AdsPage() {
     if (auditing) return;
     setAuditing(true);
     setStatus(null);
-
-    // Kick off audit as a single background job covering all accessible
-    // brands (the endpoint scans every active brand the user can see when
-    // brandId is omitted). Status badge in the header tracks completion.
     let queued = false;
     try {
       const res = await fetch("/api/cron/monitor", {
@@ -346,7 +371,8 @@ export default function AdsPage() {
       const data = await res.json();
       if (res.ok && data.success !== false) {
         const newStatus =
-          (data.new_status as string) || (action === "pause" ? "PAUSED" : "ACTIVE");
+          (data.new_status as string) ||
+          (action === "pause" ? "PAUSED" : "ACTIVE");
         setAds((prev) =>
           prev.map((a) => (a.id === adId ? { ...a, status: newStatus } : a)),
         );
@@ -360,7 +386,7 @@ export default function AdsPage() {
     setActionLoading(null);
   }
 
-  function getThresholds(bid: string) {
+  function getThresholds(bid: string): Thresholds {
     return (
       brands.find((b) => b.id === bid)?.config?.thresholds || {
         cplMax: null,
@@ -385,8 +411,6 @@ export default function AdsPage() {
     health: getAdHealth(ad, getThresholds(ad.brandId)),
   }));
 
-  // Bucket counts so the chip filters in the toolbar can show e.g. "Kill 2"
-  // without re-walking the ad list per chip render.
   const healthCounts = adsWithHealth.reduce(
     (acc, entry) => {
       acc[entry.health] = (acc[entry.health] || 0) + 1;
@@ -416,9 +440,6 @@ export default function AdsPage() {
     }
   });
 
-  // Summary totals for the dashboard strip — computed from filteredAds so it
-  // reflects whatever the user is currently looking at (date range, brand,
-  // health filter all apply).
   const summary = filteredAds.reduce(
     (acc, { ad }) => {
       acc.spend += ad.spend;
@@ -434,8 +455,17 @@ export default function AdsPage() {
     { spend: 0, leads: 0, impressions: 0, clicks: 0, freqSum: 0, freqCount: 0 },
   );
   const totalCpl = summary.leads > 0 ? summary.spend / summary.leads : null;
-  const totalCtr = summary.impressions > 0 ? (summary.clicks / summary.impressions) * 100 : null;
-  const avgFreq = summary.freqCount > 0 ? summary.freqSum / summary.freqCount : null;
+  const totalCtr =
+    summary.impressions > 0
+      ? (summary.clicks / summary.impressions) * 100
+      : null;
+  const avgFreq =
+    summary.freqCount > 0 ? summary.freqSum / summary.freqCount : null;
+
+  // Threshold ratio bars on summary tiles only make sense when a single brand
+  // is selected — across "All brands" each ad has its own targets.
+  const summaryThresholds: Thresholds | null =
+    selectedBrand !== "all" ? getThresholds(selectedBrand) : null;
 
   const grouped = groupBy(sortedAds, (e) => {
     switch (groupKey) {
@@ -455,39 +485,51 @@ export default function AdsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-5 animate-fade-in">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      {/* Header — title + brand selector + dates + actions on one row */}
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-gray-900">
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-900 dark:text-white">
             Ad Audit
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Monitor and act on live ad performance
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button
-            onClick={handleSyncAll}
-            disabled={syncingAll || auditing || brands.length === 0}
-            variant="outline"
-            size="sm"
-          >
-            {syncingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            {syncingAll ? "Syncing…" : "Sync all data"}
-          </Button>
-          <Button
-            onClick={handleRunAudit}
-            disabled={syncingAll || auditing || brands.length === 0}
-            size="sm"
-          >
-            {auditing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
-            {auditing ? "Running audit…" : "Run audit"}
-          </Button>
+          <div className="flex items-center gap-1.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 px-2 h-9">
+            <CalendarIcon className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
+            />
+            <span className="text-xs text-gray-400">→</span>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-32 font-mono text-xs h-7 border-0 bg-transparent shadow-none px-1 focus-visible:ring-0"
+            />
+            <div className="flex gap-0.5 ml-1 border-l border-gray-200 dark:border-white/10 pl-1">
+              {[7, 30, 90].map((d) => (
+                <Button
+                  key={d}
+                  onClick={() => setDatePreset(d)}
+                  variant="ghost"
+                  size="xs"
+                >
+                  {d}D
+                </Button>
+              ))}
+            </div>
+          </div>
+
           <Select
             value={selectedBrand}
             onValueChange={(v) => v && setSelectedBrand(v)}
           >
-            <SelectTrigger className="w-56 h-9">
+            <SelectTrigger className="w-48 h-9">
               <SelectValue>
                 {selectedBrand === "all"
                   ? "All brands"
@@ -503,181 +545,190 @@ export default function AdsPage() {
               ))}
             </SelectContent>
           </Select>
+
+          <Button
+            onClick={handleSyncAll}
+            disabled={syncingAll || auditing || brands.length === 0}
+            variant="outline"
+            size="sm"
+          >
+            {syncingAll ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-3.5 h-3.5" />
+            )}
+            {syncingAll ? "Syncing…" : "Sync"}
+          </Button>
+          <Button
+            onClick={handleRunAudit}
+            disabled={syncingAll || auditing || brands.length === 0}
+            size="sm"
+          >
+            {auditing ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <ShieldAlert className="w-3.5 h-3.5" />
+            )}
+            {auditing ? "Auditing…" : "Run audit"}
+          </Button>
         </div>
       </div>
 
       {status && (
-        <div className="text-xs text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+        <div className="text-xs text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 rounded-xl px-3 py-2">
           {status}
         </div>
       )}
 
-      {/* Toolbar: date + sort + group on one tight row, no card frame.
-          Replaces the previous date Card + filters row (two stacked sections).
-          Health filter moved out — it's now chips inside the metric card below
-          since "find ads needing action" is the primary task here. */}
-      <div className="flex items-center gap-2 flex-wrap text-sm">
-        <CalendarIcon className="w-4 h-4 text-gray-400 shrink-0" />
-        <Input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          className="w-36 font-mono text-xs h-8"
+      {/* Summary tiles — five rounded cards with optional threshold bars */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <SummaryTile label="Spend" value={`RM${formatNumber(summary.spend)}`} />
+        <SummaryTile label="Leads" value={summary.leads.toLocaleString()} />
+        <SummaryTile
+          label={displayCostLabel}
+          value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
+          ratio={
+            summaryThresholds?.cplMax && totalCpl !== null
+              ? { value: totalCpl, target: summaryThresholds.cplMax, lowerIsBetter: true }
+              : null
+          }
         />
-        <span className="text-xs text-gray-400">to</span>
-        <Input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          className="w-36 font-mono text-xs h-8"
+        <SummaryTile
+          label="CTR"
+          value={totalCtr !== null ? `${totalCtr.toFixed(2)}%` : "—"}
+          ratio={
+            summaryThresholds?.ctrMin && totalCtr !== null
+              ? { value: totalCtr, target: summaryThresholds.ctrMin, lowerIsBetter: false }
+              : null
+          }
         />
-        <div className="flex gap-0.5 ml-1">
-          {[7, 14, 30, 90].map((d) => (
-            <Button
-              key={d}
-              onClick={() => setDatePreset(d)}
-              variant="ghost"
-              size="xs"
-            >
-              {d}D
-            </Button>
-          ))}
-        </div>
-
-        <span className="w-px h-5 bg-slate-200 mx-1" aria-hidden />
-
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-400 uppercase tracking-wider">
-            Sort
-          </span>
-          <Select
-            value={sortKey}
-            onValueChange={(v) => v && setSortKey(v as SortKey)}
-          >
-            <SelectTrigger className="w-28 h-8">
-              <SelectValue>{sortKey}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="spend">Spend</SelectItem>
-              <SelectItem value="cpl">{displayCostLabel}</SelectItem>
-              <SelectItem value="ctr">CTR</SelectItem>
-              <SelectItem value="freq">Frequency</SelectItem>
-              <SelectItem value="name">Name</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-400 uppercase tracking-wider">
-            Group
-          </span>
-          <Select
-            value={groupKey}
-            onValueChange={(v) => v && setGroupKey(v as GroupKey)}
-          >
-            <SelectTrigger className="w-28 h-8">
-              <SelectValue>
-                {groupKey === "none" ? "None" : groupKey}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None</SelectItem>
-              <SelectItem value="brand">Brand</SelectItem>
-              <SelectItem value="campaign">Campaign</SelectItem>
-              <SelectItem value="health">Health</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <span className="text-[11px] text-gray-400 ml-auto font-mono">
-          {sortedAds.length} of {ads.length} ads
-        </span>
+        <SummaryTile
+          label="Frequency"
+          value={avgFreq !== null ? avgFreq.toFixed(2) : "—"}
+          ratio={
+            summaryThresholds?.frequencyMax && avgFreq !== null
+              ? { value: avgFreq, target: summaryThresholds.frequencyMax, lowerIsBetter: true }
+              : null
+          }
+        />
       </div>
 
-      {/* Single combined card: metric strip on top + health-filter chips on
-          bottom. Replaces the old 5 separate stat cards + Health dropdown.
-          The chips show counts so the operator can see at a glance "2 ads
-          need killing" without expanding the dropdown. */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="px-4 md:px-6 py-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-6 gap-y-3 border-b border-slate-100">
-            <CompactMetric
-              label="Spend"
-              value={`RM${summary.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-            />
-            <CompactMetric label="Leads" value={summary.leads.toLocaleString()} />
-            <CompactMetric
-              label={displayCostLabel}
-              value={totalCpl !== null ? `RM${totalCpl.toFixed(2)}` : "—"}
-            />
-            <CompactMetric
-              label="CTR"
-              value={totalCtr !== null ? `${totalCtr.toFixed(2)}%` : "—"}
-            />
-            <CompactMetric
-              label="Frequency"
-              value={avgFreq !== null ? avgFreq.toFixed(2) : "—"}
-            />
-          </div>
-          <div className="px-4 md:px-6 py-3 flex items-center gap-1.5 flex-wrap bg-slate-50/60">
-            <span className="text-[10px] text-gray-400 uppercase tracking-wider mr-1">
-              Filter
-            </span>
-            <HealthChip
-              label="All"
-              count={adsWithHealth.length}
-              active={healthFilter === "all"}
-              onClick={() => setHealthFilter("all")}
-            />
-            <HealthChip
-              label="Kill"
-              count={healthCounts.kill || 0}
-              tone="kill"
-              active={healthFilter === "kill"}
-              onClick={() => setHealthFilter("kill")}
-            />
-            <HealthChip
-              label="Warning"
-              count={healthCounts.warning || 0}
-              tone="warning"
-              active={healthFilter === "warning"}
-              onClick={() => setHealthFilter("warning")}
-            />
-            <HealthChip
-              label="Healthy"
-              count={healthCounts.healthy || 0}
-              tone="healthy"
-              active={healthFilter === "healthy"}
-              onClick={() => setHealthFilter("healthy")}
-            />
-            <HealthChip
-              label="Winner"
-              count={healthCounts.winner || 0}
-              tone="winner"
-              active={healthFilter === "winner"}
-              onClick={() => setHealthFilter("winner")}
-            />
-            <HealthChip
-              label="No data"
-              count={healthCounts.neutral || 0}
-              tone="neutral"
-              active={healthFilter === "neutral"}
-              onClick={() => setHealthFilter("neutral")}
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {/* Filter row — health chips on the left, sort/group on the right */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <HealthChip
+          label="All"
+          count={adsWithHealth.length}
+          active={healthFilter === "all"}
+          onClick={() => setHealthFilter("all")}
+        />
+        <HealthChip
+          label="Kill"
+          count={healthCounts.kill || 0}
+          tone="kill"
+          active={healthFilter === "kill"}
+          onClick={() => setHealthFilter("kill")}
+        />
+        <HealthChip
+          label="Warning"
+          count={healthCounts.warning || 0}
+          tone="warning"
+          active={healthFilter === "warning"}
+          onClick={() => setHealthFilter("warning")}
+        />
+        <HealthChip
+          label="Healthy"
+          count={healthCounts.healthy || 0}
+          tone="healthy"
+          active={healthFilter === "healthy"}
+          onClick={() => setHealthFilter("healthy")}
+        />
+        <HealthChip
+          label="Winner"
+          count={healthCounts.winner || 0}
+          tone="winner"
+          active={healthFilter === "winner"}
+          onClick={() => setHealthFilter("winner")}
+        />
+        <HealthChip
+          label="No data"
+          count={healthCounts.neutral || 0}
+          tone="neutral"
+          active={healthFilter === "neutral"}
+          onClick={() => setHealthFilter("neutral")}
+        />
 
-      {/* Content */}
+        <div className="ml-auto flex items-center gap-3 text-sm">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">
+              Sort
+            </span>
+            <Select
+              value={sortKey}
+              onValueChange={(v) => v && setSortKey(v as SortKey)}
+            >
+              <SelectTrigger className="w-28 h-8">
+                <SelectValue>{sortKey}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="spend">Spend</SelectItem>
+                <SelectItem value="cpl">{displayCostLabel}</SelectItem>
+                <SelectItem value="ctr">CTR</SelectItem>
+                <SelectItem value="freq">Frequency</SelectItem>
+                <SelectItem value="name">Name</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">
+              Group
+            </span>
+            <Select
+              value={groupKey}
+              onValueChange={(v) => v && setGroupKey(v as GroupKey)}
+            >
+              <SelectTrigger className="w-28 h-8">
+                <SelectValue>
+                  {groupKey === "none" ? "None" : groupKey}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None</SelectItem>
+                <SelectItem value="brand">Brand</SelectItem>
+                <SelectItem value="campaign">Campaign</SelectItem>
+                <SelectItem value="health">Health</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <span className="text-[11px] text-gray-400 font-mono">
+            {sortedAds.length} of {ads.length}
+          </span>
+        </div>
+      </div>
+
+      {/* Tile grid */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div
+              key={i}
+              className="h-44 rounded-2xl bg-gray-100 dark:bg-white/5 animate-pulse"
+            />
+          ))}
         </div>
       ) : ads.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16">
-            <Megaphone className="w-12 h-12 text-gray-300 mb-3" />
-            <p className="text-gray-500">No data for this date range</p>
+            <Megaphone className="w-12 h-12 text-gray-300 dark:text-white/20 mb-3" />
+            <p className="text-muted-foreground">No data for this date range</p>
+          </CardContent>
+        </Card>
+      ) : sortedAds.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Megaphone className="w-12 h-12 text-gray-300 dark:text-white/20 mb-3" />
+            <p className="text-muted-foreground">
+              No ads match the current filter
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -685,181 +736,32 @@ export default function AdsPage() {
           {groupKeys.map((k) => {
             const rows = grouped[k];
             return (
-              <div key={k} className="space-y-2">
+              <div key={k} className="space-y-3">
                 {groupKey !== "none" && (
-                  <h2 className="text-[11px] uppercase tracking-wider text-gray-500 font-medium">
-                    {k} <span className="text-gray-400">({rows.length})</span>
-                  </h2>
-                )}
-                <Card>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-200 text-[11px] text-gray-400 uppercase tracking-wider">
-                          <th className="text-left font-medium px-4 py-2">Ad</th>
-                          <th className="text-left font-medium px-3 py-2">
-                            Status
-                          </th>
-                          <th className="text-left font-medium px-3 py-2">
-                            Health
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            {displayCostLabel}
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            CTR
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            Freq
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            Spend
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            Leads
-                          </th>
-                          <th className="text-right font-medium px-3 py-2">
-                            Actions
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map(({ ad, health }) => {
-                          const hc = HEALTH_STYLES[health];
-                          const cl = getCostLabel(ad.brandId);
-                          const t = getThresholds(ad.brandId);
-                          const cplW =
-                            t.cplMax !== null &&
-                            ad.cpl !== null &&
-                            ad.cpl > t.cplMax;
-                          const ctrW =
-                            t.ctrMin !== null &&
-                            ad.ctr !== null &&
-                            ad.ctr < t.ctrMin;
-                          const freqW =
-                            t.frequencyMax !== null &&
-                            ad.frequency !== null &&
-                            ad.frequency > t.frequencyMax;
-                          const acting = actionLoading === ad.id;
-
-                          return (
-                            <tr
-                              key={ad.id}
-                              onClick={() => setDetailAd(ad)}
-                              className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
-                            >
-                              <td className="px-4 py-2.5">
-                                <div
-                                  className="font-medium truncate max-w-[240px]"
-                                  title={ad.name}
-                                >
-                                  {ad.name}
-                                </div>
-                                <div className="text-[11px] text-gray-400 truncate max-w-[240px]">
-                                  {ad.brandName && (
-                                    <span>{ad.brandName} &middot; </span>
-                                  )}
-                                  {ad.campaignName || "—"}
-                                </div>
-                              </td>
-                              <td className="px-3 py-2.5">
-                                <Badge
-                                  variant={
-                                    ad.status === "ACTIVE"
-                                      ? "success"
-                                      : "secondary"
-                                  }
-                                >
-                                  {ad.status}
-                                </Badge>
-                              </td>
-                              <td className="px-3 py-2.5">
-                                <Badge variant={hc.badgeVariant}>
-                                  {cl === "CPL" ? hc.label : hc.label}
-                                </Badge>
-                              </td>
-                              <td
-                                className={cn(
-                                  "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  cplW ? "text-red-600" : "text-gray-800",
-                                )}
-                                title={cl}
-                              >
-                                {ad.cpl !== null
-                                  ? `RM${ad.cpl.toFixed(2)}`
-                                  : "—"}
-                              </td>
-                              <td
-                                className={cn(
-                                  "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  ctrW ? "text-red-600" : "text-gray-800",
-                                )}
-                              >
-                                {ad.ctr !== null
-                                  ? `${ad.ctr.toFixed(2)}%`
-                                  : "—"}
-                              </td>
-                              <td
-                                className={cn(
-                                  "text-right px-3 py-2.5 font-mono tabular-nums",
-                                  freqW ? "text-red-600" : "text-gray-800",
-                                )}
-                              >
-                                {ad.frequency !== null
-                                  ? ad.frequency.toFixed(1)
-                                  : "—"}
-                              </td>
-                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-gray-800">
-                                RM{ad.spend.toFixed(0)}
-                              </td>
-                              <td className="text-right px-3 py-2.5 font-mono tabular-nums text-gray-800">
-                                {ad.leads}
-                              </td>
-                              <td
-                                className="text-right px-3 py-2.5"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {ad.status === "ACTIVE" ? (
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    onClick={() =>
-                                      handleAdAction(ad.id, "pause")
-                                    }
-                                    disabled={acting}
-                                  >
-                                    {acting ? (
-                                      <Loader2 className="animate-spin" />
-                                    ) : (
-                                      <Pause />
-                                    )}
-                                    Pause
-                                  </Button>
-                                ) : (
-                                  <Button
-                                    size="xs"
-                                    variant="ghost"
-                                    onClick={() =>
-                                      handleAdAction(ad.id, "activate")
-                                    }
-                                    disabled={acting}
-                                  >
-                                    {acting ? (
-                                      <Loader2 className="animate-spin" />
-                                    ) : (
-                                      <Play />
-                                    )}
-                                    Activate
-                                  </Button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
+                      {k}
+                    </h2>
+                    <span className="text-[11px] text-gray-400 font-mono">
+                      {rows.length}
+                    </span>
+                    <span className="flex-1 h-px bg-gray-200 dark:bg-white/10" />
                   </div>
-                </Card>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                  {rows.map(({ ad, health }) => (
+                    <AdTile
+                      key={ad.id}
+                      ad={ad}
+                      health={health}
+                      costLabel={getCostLabel(ad.brandId)}
+                      thresholds={getThresholds(ad.brandId)}
+                      isActing={actionLoading === ad.id}
+                      onAction={handleAdAction}
+                      onOpen={() => setDetailAd(ad)}
+                    />
+                  ))}
+                </div>
               </div>
             );
           })}
@@ -881,6 +783,241 @@ export default function AdsPage() {
   );
 }
 
+function AdTile({
+  ad,
+  health,
+  costLabel,
+  thresholds,
+  isActing,
+  onAction,
+  onOpen,
+}: {
+  ad: AdData;
+  health: AdHealth;
+  costLabel: string;
+  thresholds: Thresholds;
+  isActing: boolean;
+  onAction: (id: string, action: "pause" | "activate") => void;
+  onOpen: () => void;
+}) {
+  const hc = HEALTH_STYLES[health];
+  const breaches = getBreaches(ad, thresholds);
+  const isActive = ad.status === "ACTIVE";
+
+  return (
+    <div
+      onClick={onOpen}
+      className={cn(
+        "group relative overflow-hidden rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#141814] p-4 cursor-pointer",
+        "transition-all duration-150",
+        "hover:border-[#99ff33]/60 dark:hover:border-[#99ff33]/40 hover:shadow-[0_4px_20px_rgb(153_255_51/0.12)]",
+        "before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-1 before:rounded-l-2xl",
+        hc.edge,
+        hc.accent,
+      )}
+    >
+      {/* Top row: health pill + action */}
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={cn("size-1.5 rounded-full shrink-0", hc.dot)}
+            aria-hidden
+          />
+          <Badge variant={hc.badgeVariant}>{hc.label}</Badge>
+          <Badge variant={isActive ? "outline" : "secondary"}>
+            {ad.status}
+          </Badge>
+        </div>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAction(ad.id, isActive ? "pause" : "activate");
+          }}
+          disabled={isActing}
+          className={cn(
+            "shrink-0 inline-flex items-center justify-center size-7 rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 text-gray-600 dark:text-gray-300 transition-colors",
+            "hover:bg-gray-50 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-white",
+            "disabled:opacity-50 disabled:pointer-events-none",
+          )}
+          title={isActive ? "Pause ad" : "Activate ad"}
+        >
+          {isActing ? (
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          ) : isActive ? (
+            <Pause className="w-3.5 h-3.5" />
+          ) : (
+            <Play className="w-3.5 h-3.5" />
+          )}
+        </button>
+      </div>
+
+      {/* Name + breadcrumb */}
+      <div className="mb-4">
+        <h3
+          className="font-semibold text-gray-900 dark:text-white text-[15px] leading-snug line-clamp-2"
+          title={ad.name}
+        >
+          {ad.name}
+        </h3>
+        <p className="text-xs text-muted-foreground mt-1 truncate">
+          {ad.brandName ? <span>{ad.brandName} · </span> : null}
+          {ad.campaignName || "—"}
+        </p>
+      </div>
+
+      {/* Three-up metric strip */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <TileMetric
+          label={costLabel}
+          value={ad.cpl !== null ? `RM${ad.cpl.toFixed(2)}` : "—"}
+          breach={breaches.cplOver}
+          direction="up"
+          target={
+            thresholds.cplMax !== null
+              ? `≤ RM${thresholds.cplMax.toFixed(2)}`
+              : null
+          }
+        />
+        <TileMetric
+          label="CTR"
+          value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
+          breach={breaches.ctrUnder}
+          direction="down"
+          target={
+            thresholds.ctrMin !== null
+              ? `≥ ${thresholds.ctrMin.toFixed(2)}%`
+              : null
+          }
+        />
+        <TileMetric
+          label="Freq"
+          value={ad.frequency !== null ? ad.frequency.toFixed(1) : "—"}
+          breach={breaches.freqOver}
+          direction="up"
+          target={
+            thresholds.frequencyMax !== null
+              ? `≤ ${thresholds.frequencyMax.toFixed(1)}`
+              : null
+          }
+        />
+      </div>
+
+      {/* Footer: spend / leads */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground border-t border-gray-100 dark:border-white/10 pt-3 -mx-4 px-4">
+        <span className="font-mono tabular-nums text-gray-700 dark:text-gray-300">
+          RM{formatNumber(ad.spend)}{" "}
+          <span className="text-gray-400">spent</span>
+        </span>
+        <span className="font-mono tabular-nums text-gray-700 dark:text-gray-300">
+          {ad.leads.toLocaleString()}{" "}
+          <span className="text-gray-400">
+            {ad.leads === 1 ? "lead" : "leads"}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function TileMetric({
+  label,
+  value,
+  breach,
+  direction,
+  target,
+}: {
+  label: string;
+  value: string;
+  breach: boolean;
+  direction: "up" | "down";
+  target: string | null;
+}) {
+  const Glyph =
+    target === null ? Minus : direction === "up" ? TrendingUp : TrendingDown;
+  return (
+    <div className="rounded-xl bg-gray-50 dark:bg-white/5 px-2.5 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium truncate">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "text-base font-semibold tabular-nums mt-0.5",
+          breach ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-white",
+        )}
+      >
+        {value}
+      </p>
+      <div className="flex items-center gap-1 mt-1">
+        <Glyph
+          className={cn(
+            "w-3 h-3 shrink-0",
+            breach
+              ? "text-red-500"
+              : target === null
+                ? "text-gray-300 dark:text-white/20"
+                : "text-emerald-500",
+          )}
+        />
+        <span className="text-[10px] text-gray-400 truncate font-mono">
+          {target ?? "no target"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  ratio,
+}: {
+  label: string;
+  value: string;
+  ratio?: {
+    value: number;
+    target: number;
+    lowerIsBetter: boolean;
+  } | null;
+}) {
+  let bar: { pct: number; over: boolean } | null = null;
+  if (ratio && ratio.target > 0) {
+    const raw = (ratio.value / ratio.target) * 100;
+    const pct = Math.max(0, Math.min(100, raw));
+    const over = ratio.lowerIsBetter ? raw > 100 : raw < 100;
+    bar = { pct, over };
+  }
+  return (
+    <div className="rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-[#141814] p-4 transition-all hover:border-[#99ff33]/60 dark:hover:border-[#99ff33]/40 hover:shadow-[0_4px_20px_rgb(153_255_51/0.10)]">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        {label}
+      </p>
+      <p className="text-xl md:text-2xl font-semibold text-gray-900 dark:text-white mt-1 tabular-nums truncate">
+        {value}
+      </p>
+      {bar ? (
+        <div className="mt-3">
+          <div className="h-1 w-full bg-gray-100 dark:bg-white/10 rounded-full overflow-hidden">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all",
+                bar.over ? "bg-red-400" : "bg-[#99ff33]",
+              )}
+              style={{ width: `${bar.pct}%` }}
+            />
+          </div>
+          <p className="text-[10px] text-gray-400 mt-1 font-mono truncate">
+            target {ratio!.lowerIsBetter ? "≤" : "≥"}{" "}
+            {ratio!.target.toFixed(2)}
+          </p>
+        </div>
+      ) : (
+        <div className="mt-3 h-1 w-full" aria-hidden />
+      )}
+    </div>
+  );
+}
+
 function AdDetailDialog({
   ad,
   onClose,
@@ -890,7 +1027,7 @@ function AdDetailDialog({
 }: {
   ad: AdData | null;
   onClose: () => void;
-  thresholds: BrandData["config"]["thresholds"] | null;
+  thresholds: Thresholds | null;
   costLabel: string;
   health: AdHealth | null;
 }) {
@@ -941,10 +1078,7 @@ function AdDetailDialog({
                 label="Impressions"
                 value={ad.impressions.toLocaleString()}
               />
-              <DetailStat
-                label="Clicks"
-                value={ad.clicks.toLocaleString()}
-              />
+              <DetailStat label="Clicks" value={ad.clicks.toLocaleString()} />
               <DetailStat
                 label="CTR"
                 value={ad.ctr !== null ? `${ad.ctr.toFixed(2)}%` : "—"}
@@ -968,12 +1102,12 @@ function AdDetailDialog({
             </div>
 
             {ad.metaAdId && (
-              <div className="pt-2 border-t border-gray-200">
+              <div className="pt-2 border-t border-gray-200 dark:border-white/10">
                 <a
                   href={`https://www.facebook.com/adsmanager/manage/ads?selected_ad_ids=${ad.metaAdId}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-indigo-600 hover:underline"
+                  className="text-xs text-indigo-600 dark:text-indigo-300 hover:underline"
                 >
                   Open in Meta Ads Manager &rarr;
                 </a>
@@ -996,14 +1130,16 @@ function DetailStat({
   hint?: string;
 }) {
   return (
-    <div className="rounded-lg border border-gray-200 px-3 py-2">
-      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
+    <div className="rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/50 dark:bg-white/5 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
         {label}
       </p>
-      <p className="text-base font-semibold text-gray-900 mt-0.5 tabular-nums">
+      <p className="text-base font-semibold text-gray-900 dark:text-white mt-0.5 tabular-nums">
         {value}
       </p>
-      {hint && <p className="text-[10px] text-gray-400 mt-0.5">{hint}</p>}
+      {hint && (
+        <p className="text-[10px] text-muted-foreground mt-0.5">{hint}</p>
+      )}
     </div>
   );
 }
@@ -1021,26 +1157,10 @@ function groupBy<T>(
   return out;
 }
 
-// Inline metric used in the combined Card at the top of the audit. Lighter
-// weight than the previous SummaryCard (no border, no subtitle) so 5 of these
-// in a row don't fight the surrounding chrome for attention.
-function CompactMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <p className="text-[10px] uppercase tracking-wider text-gray-400 font-medium">
-        {label}
-      </p>
-      <p className="text-lg font-semibold text-gray-900 mt-0.5 tabular-nums truncate">
-        {value}
-      </p>
-    </div>
-  );
+function formatNumber(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-// Click-to-filter chip with a count badge. `tone === undefined` is the "All"
-// variant (indigo when active, slate when not). The other tones map to the
-// same colour family as the corresponding status badge in the ad row, so the
-// connection between "click Kill chip" and "see Kill-tinted rows" is obvious.
 function HealthChip({
   label,
   count,
@@ -1058,7 +1178,6 @@ function HealthChip({
     "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer border";
 
   if (tone === undefined) {
-    // "All" chip — indigo when active, slate when not
     return (
       <button
         type="button"
@@ -1066,15 +1185,17 @@ function HealthChip({
         className={cn(
           base,
           active
-            ? "bg-indigo-100 border-indigo-200 text-indigo-800"
-            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50",
+            ? "bg-indigo-100 dark:bg-indigo-950/50 border-indigo-200 dark:border-indigo-900 text-indigo-800 dark:text-indigo-200"
+            : "bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10",
         )}
       >
         {label}
         <span
           className={cn(
             "text-[10px] tabular-nums",
-            active ? "text-indigo-600" : "text-slate-400",
+            active
+              ? "text-indigo-600 dark:text-indigo-300"
+              : "text-gray-400",
           )}
         >
           {count}
@@ -1085,24 +1206,30 @@ function HealthChip({
 
   const toneStyles = {
     kill: {
-      activeBg: "bg-red-100 border-red-200 text-red-800",
-      hover: "hover:bg-red-50 hover:border-red-200",
+      activeBg:
+        "bg-red-100 dark:bg-red-950/40 border-red-200 dark:border-red-900 text-red-800 dark:text-red-300",
+      hover: "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-200",
     },
     warning: {
-      activeBg: "bg-amber-100 border-amber-200 text-amber-800",
-      hover: "hover:bg-amber-50 hover:border-amber-200",
+      activeBg:
+        "bg-amber-100 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-300",
+      hover: "hover:bg-amber-50 dark:hover:bg-amber-950/20 hover:border-amber-200",
     },
     healthy: {
-      activeBg: "bg-emerald-100 border-emerald-200 text-emerald-800",
-      hover: "hover:bg-emerald-50 hover:border-emerald-200",
+      activeBg:
+        "bg-emerald-100 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-300",
+      hover:
+        "hover:bg-emerald-50 dark:hover:bg-emerald-950/20 hover:border-emerald-200",
     },
     winner: {
-      activeBg: "bg-blue-100 border-blue-200 text-blue-800",
-      hover: "hover:bg-blue-50 hover:border-blue-200",
+      activeBg:
+        "bg-blue-100 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-800 dark:text-blue-300",
+      hover: "hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-200",
     },
     neutral: {
-      activeBg: "bg-slate-200 border-slate-300 text-slate-700",
-      hover: "hover:bg-slate-100 hover:border-slate-200",
+      activeBg:
+        "bg-slate-200 dark:bg-white/15 border-slate-300 dark:border-white/15 text-slate-700 dark:text-slate-200",
+      hover: "hover:bg-slate-100 dark:hover:bg-white/10 hover:border-slate-200",
     },
   } as const;
 
@@ -1115,7 +1242,7 @@ function HealthChip({
         base,
         active
           ? style.activeBg
-          : `bg-white border-slate-200 text-slate-600 ${style.hover}`,
+          : `bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300 ${style.hover}`,
       )}
     >
       {label}
