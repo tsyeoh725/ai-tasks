@@ -86,38 +86,23 @@ export interface CredentialProvider {
 
 **Where it lives:** `src/lib/ad-platforms/credentials/`
 
-### 3. `Recommendation<TPlatform>` — what the AI Guard outputs
+### 3. `Recommendation` + `ActionKind` — what the AI Guard outputs
 
-Today the `Recommendation` type in `claude-guard.ts` hardcodes `RecommendationAction = "kill" | "pause" | "boost_budget" | "duplicate"` — those are Meta's action words. They happen to also exist on Google Ads and TikTok with the same intent, but field shapes differ.
+Today the `Recommendation` type in `claude-guard.ts` hardcodes `RecommendationAction = "kill" | "pause" | "boost_budget" | "duplicate"` and is implicitly Meta-shaped. Those four action words happen to mean the same intent on Google Ads and TikTok too — only the underlying API shape differs.
+
+We considered making `Recommendation` generic over a `PlatformActionPayload[TPlatform]` type. **Decided against** — YAGNI. The Recommendation only needs to say *"do action X on ad Y, on platform P"*. The platform-specific knowledge (which API endpoint, which fields) lives in the `AdPlatform` adapter, where it belongs. The executor reads `recommendation.platform`, dispatches to the right adapter, done.
 
 ```ts
-// src/lib/ad-platforms/types.ts
+// src/lib/ad-platforms/types.ts (Phase 1 — already lives here)
 export type ActionKind = "kill" | "pause" | "boost_budget" | "duplicate";
 
-export interface Recommendation<TPlatform extends PlatformId = PlatformId> {
-  platform: TPlatform;
-  brandId: string;
-  adId: string;
-  adSetId: string;
-  campaignId: string;
-  action: ActionKind;
-  // platform-specific payload:
-  payload: PlatformActionPayload[TPlatform];
-  reason: string;
-  evidence: Insight[];
-  // ... rest unchanged from today
-}
-
-export type PlatformActionPayload = {
-  meta: {
-    /* current Meta-shaped fields: targetId, targetType ('ad' | 'adset' | 'campaign'), boostBudgetCents, etc. */
-  };
-  google: { /* future */ };
-  tiktok: { /* future */ };
-};
+// Phase 4 will add `platform: PlatformId` to the existing Recommendation
+// in claude-guard.ts. No generics, no payload type. Existing fields
+// (kpiValues, thresholds, maturity, recentActions) stay as-is — they're
+// already platform-agnostic in shape.
 ```
 
-**Net effect:** AI Guard prompts stay platform-agnostic in spirit (they already are). The executor receives `Recommendation<"meta">`, does Meta-shaped writes. Later Google executor receives `Recommendation<"google">`, does Google-shaped writes. Decision Journal records `platform` column.
+**Net effect:** AI Guard prompts stay platform-agnostic (they already are). The executor reads `recommendation.platform`, dispatches to the right adapter. Decision Journal records `platform` column for cross-platform analytics.
 
 ---
 
