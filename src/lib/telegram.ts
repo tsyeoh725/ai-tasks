@@ -14,36 +14,113 @@ import { v4 as uuid } from "uuid";
 
 // Telegram's hard ceiling per message. The bot API rejects anything longer.
 // Splitting on paragraph boundaries first, then sentence/newline, gives the
-// nicest reading experience; we fall back to a hard slice if a single
-// paragraph is itself too long.
+// nicest reading experience; we fall back to whitespace-then-grapheme
+// slicing only if a single chunk is itself too long.
 const TELEGRAM_MAX_MESSAGE_LEN = 4000; // a touch under 4096 to leave headroom
 
+// SL-13: split graphemes, not UTF-16 code units. The previous `text.slice`
+// could cut emoji and CJK supplementary characters in half, producing
+// invalid surrogate pairs that Telegram rejects (HTTP 400) or renders as `?`.
+// Also: prefer whitespace before grapheme-slicing so a single 5000-char URL
+// doesn't get cut in the middle (which silently corrupts approval links).
+const graphemeSegmenter =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter("en", { granularity: "grapheme" })
+    : null;
+
+function graphemeLength(text: string): number {
+  if (!graphemeSegmenter) return text.length;
+  let n = 0;
+  for (const _ of graphemeSegmenter.segment(text)) n++;
+  return n;
+}
+
+function chunkByGraphemes(text: string, max: number): string[] {
+  if (graphemeLength(text) <= max) return [text];
+  if (!graphemeSegmenter) {
+    // Fallback (engine without Intl.Segmenter): code-point split via
+    // spread, which at least walks code points instead of code units.
+    const cps = [...text];
+    const out: string[] = [];
+    for (let i = 0; i < cps.length; i += max) out.push(cps.slice(i, i + max).join(""));
+    return out;
+  }
+  const out: string[] = [];
+  let buf = "";
+  let bufLen = 0;
+  for (const seg of graphemeSegmenter.segment(text)) {
+    if (bufLen + 1 > max) {
+      out.push(buf);
+      buf = "";
+      bufLen = 0;
+    }
+    buf += seg.segment;
+    bufLen++;
+  }
+  if (buf) out.push(buf);
+  return out;
+}
+
 function splitForTelegram(text: string): string[] {
-  if (text.length <= TELEGRAM_MAX_MESSAGE_LEN) return [text];
+  if (graphemeLength(text) <= TELEGRAM_MAX_MESSAGE_LEN) return [text];
 
   const out: string[] = [];
   let buf = "";
+  let bufLen = 0;
+
+  const flushBuf = () => {
+    if (buf.trim()) out.push(buf.trimEnd());
+    buf = "";
+    bufLen = 0;
+  };
+
   // Split on double-newline first (paragraphs), then on single-newline if a
-  // paragraph itself is oversized. Anything still oversized gets a hard slice.
+  // paragraph itself is oversized, then on whitespace, then grapheme-slice.
   for (const para of text.split(/\n\n+/)) {
     const piece = para + "\n\n";
-    if (buf.length + piece.length <= TELEGRAM_MAX_MESSAGE_LEN) {
+    const pieceLen = graphemeLength(piece);
+
+    if (bufLen + pieceLen <= TELEGRAM_MAX_MESSAGE_LEN) {
       buf += piece;
-    } else {
-      if (buf) out.push(buf.trimEnd());
-      if (piece.length <= TELEGRAM_MAX_MESSAGE_LEN) {
-        buf = piece;
-      } else {
-        // Oversized paragraph — slice it directly. Loses some readability
-        // but better than dropping the message.
-        for (let i = 0; i < piece.length; i += TELEGRAM_MAX_MESSAGE_LEN) {
-          out.push(piece.slice(i, i + TELEGRAM_MAX_MESSAGE_LEN));
+      bufLen += pieceLen;
+      continue;
+    }
+
+    flushBuf();
+
+    if (pieceLen <= TELEGRAM_MAX_MESSAGE_LEN) {
+      buf = piece;
+      bufLen = pieceLen;
+      continue;
+    }
+
+    // Oversized paragraph: try \n splits first, then whitespace, then grapheme.
+    let chunks: string[] = piece.split(/\n/).map((s) => s + "\n");
+    if (chunks.some((c) => graphemeLength(c) > TELEGRAM_MAX_MESSAGE_LEN)) {
+      chunks = chunks.flatMap((c) =>
+        graphemeLength(c) > TELEGRAM_MAX_MESSAGE_LEN ? c.split(/(\s+)/) : [c],
+      );
+    }
+    for (const c of chunks) {
+      const cLen = graphemeLength(c);
+      if (cLen > TELEGRAM_MAX_MESSAGE_LEN) {
+        // No whitespace-friendly split possible (e.g. one long URL) —
+        // grapheme-walk and emit chunks.
+        flushBuf();
+        for (const slice of chunkByGraphemes(c, TELEGRAM_MAX_MESSAGE_LEN)) {
+          out.push(slice);
         }
-        buf = "";
+        continue;
       }
+      if (bufLen + cLen > TELEGRAM_MAX_MESSAGE_LEN) {
+        flushBuf();
+      }
+      buf += c;
+      bufLen += cLen;
     }
   }
-  if (buf.trim()) out.push(buf.trimEnd());
+
+  flushBuf();
   return out;
 }
 
@@ -469,6 +546,18 @@ export async function sendTelegramMessage(
 }
 
 // Send an inline-keyboard prompt asking the user to approve/reject an AI Guard recommendation.
+// SL-12: escape `<` `>` `&` before interpolating into a Telegram HTML-mode
+// message. Reason/adName/brandName come from AI guard output and Meta API —
+// any one of them can contain `<` (e.g. an ad named "X<Y" or a parsed
+// reason quoting an HTML snippet). Telegram returns HTTP 400 on unescaped
+// special chars in HTML mode, so the approval prompt would silently fail
+// to deliver — the operator never sees it and the action never runs.
+function escTelegramHtml(s: string): string {
+  return s.replace(/[<>&]/g, (c) =>
+    c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&amp;",
+  );
+}
+
 export async function sendApprovalPrompt(
   userId: string,
   journalEntry: {
@@ -480,7 +569,13 @@ export async function sendApprovalPrompt(
     confidence: number;
   },
 ): Promise<boolean> {
-  const text = `🤖 <b>Approval needed</b>\n\n<b>Action:</b> ${journalEntry.recommendation}\n<b>Ad:</b> ${journalEntry.adName}\n<b>Brand:</b> ${journalEntry.brandName}\n<b>Reason:</b> ${journalEntry.reason}\n<b>Confidence:</b> ${Math.round(journalEntry.confidence * 100)}%`;
+  const text =
+    `🤖 <b>Approval needed</b>\n\n` +
+    `<b>Action:</b> ${escTelegramHtml(journalEntry.recommendation)}\n` +
+    `<b>Ad:</b> ${escTelegramHtml(journalEntry.adName)}\n` +
+    `<b>Brand:</b> ${escTelegramHtml(journalEntry.brandName)}\n` +
+    `<b>Reason:</b> ${escTelegramHtml(journalEntry.reason)}\n` +
+    `<b>Confidence:</b> ${Math.round(journalEntry.confidence * 100)}%`;
 
   const keyboard = {
     inline_keyboard: [[

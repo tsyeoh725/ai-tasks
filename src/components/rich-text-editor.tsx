@@ -14,6 +14,13 @@ type Props = {
 
 // Minimal Markdown -> HTML conversion for AI-drafted briefs.
 // Handles headings (##, ###), bullet/numbered lists, bold, italic, and paragraphs.
+//
+// SL-12: escape HTML-significant characters BEFORE the regex transforms.
+// Without this, AI-drafted text containing `<img onerror=...>` would be
+// inserted into the editor verbatim. tiptap's StarterKit + ProseMirror
+// schema sanitize most of it today, but custom marks / future extensions
+// could blow this open. Defense in depth at the input layer is cheaper
+// than chasing every consumer downstream.
 function markdownToHtml(md: string): string {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const html: string[] = [];
@@ -31,8 +38,21 @@ function markdownToHtml(md: string): string {
     }
   };
 
+  const escHtml = (s: string) =>
+    s.replace(/[&<>"']/g, (c) =>
+      c === "&"
+        ? "&amp;"
+        : c === "<"
+        ? "&lt;"
+        : c === ">"
+        ? "&gt;"
+        : c === '"'
+        ? "&quot;"
+        : "&#39;",
+    );
+
   const inline = (s: string) =>
-    s
+    escHtml(s)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/(^|[^*])\*(?!\s)([^*]+?)\*/g, "$1<em>$2</em>");
 
