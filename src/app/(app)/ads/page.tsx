@@ -563,6 +563,31 @@ export default function AdsPage() {
 
   const groupKeys = Object.keys(grouped);
 
+  // F-77: when grouping by campaign, nest a second level by ad set so
+  // the layout mirrors Meta Ads Manager (Campaigns → Ad Sets → Ads).
+  // Computed once here so the render path can pick between the flat
+  // and nested branches without re-running the groupBy in JSX.
+  const campaignWithAdSets: Array<{
+    campaign: string;
+    total: number;
+    adSets: Array<{
+      adSetName: string;
+      rows: typeof sortedAds;
+    }>;
+  }> = groupKey === "campaign"
+    ? groupKeys.map((campaign) => {
+        const rows = grouped[campaign];
+        const byAdSet = groupBy(rows, (e) => e.ad.adSetName || "Uncategorized");
+        // Preserve the spend-sorted order within each adset (groupBy
+        // is insertion-ordered and `rows` is already sortedAds).
+        const adSets = Object.keys(byAdSet).map((adSetName) => ({
+          adSetName,
+          rows: byAdSet[adSetName],
+        }));
+        return { campaign, total: rows.length, adSets };
+      })
+    : [];
+
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-5 animate-fade-in">
       {/* Header — title + brand selector + dates + actions on one row */}
@@ -847,6 +872,53 @@ export default function AdsPage() {
             </p>
           </CardContent>
         </Card>
+      ) : groupKey === "campaign" ? (
+        // F-77: Campaign → Ad set → Ads, like Meta Ads Manager.
+        // Outer header is the campaign with its total ad count; the
+        // inner ad-set lane is indented and rule-bordered on the left
+        // so the visual hierarchy reads at a glance.
+        <div className="space-y-8">
+          {campaignWithAdSets.map(({ campaign, total, adSets }) => (
+            <div key={campaign} className="space-y-4">
+              <div className="flex items-center gap-2">
+                <h2 className="text-xs uppercase tracking-wider text-gray-700 dark:text-gray-200 font-semibold">
+                  {campaign}
+                </h2>
+                <span className="text-[11px] text-gray-400 font-mono">
+                  {total}
+                </span>
+                <span className="flex-1 h-px bg-gray-200 dark:bg-white/10" />
+              </div>
+              <div className="space-y-5 pl-4 border-l border-gray-200 dark:border-white/10">
+                {adSets.map(({ adSetName, rows }) => (
+                  <div key={adSetName} className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
+                        {adSetName}
+                      </h3>
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {rows.length}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                      {rows.map(({ ad, health }) => (
+                        <AdTile
+                          key={ad.id}
+                          ad={ad}
+                          health={health}
+                          brand={brands.find((b) => b.id === ad.brandId)}
+                          isActing={actionLoading === ad.id}
+                          onAction={handleAdAction}
+                          onOpen={() => setDetailAd(ad)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="space-y-6">
           {groupKeys.map((k) => {
