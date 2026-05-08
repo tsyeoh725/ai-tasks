@@ -56,6 +56,11 @@ export async function GET(req: Request) {
       impressions: true,
       clicks: true,
       leads: true,
+      // F-76: pull through the new ecom counters / value so the
+      // aggregator below can sum them across the date range.
+      purchases: true,
+      addToCarts: true,
+      purchaseValue: true,
       ctr: true,
       frequency: true,
     },
@@ -67,6 +72,9 @@ export async function GET(req: Request) {
     impressions: number;
     clicks: number;
     leads: number;
+    purchases: number;
+    addToCarts: number;
+    purchaseValue: number;
     ctrSum: number;
     freqSum: number;
     days: number;
@@ -78,6 +86,9 @@ export async function GET(req: Request) {
       impressions: 0,
       clicks: 0,
       leads: 0,
+      purchases: 0,
+      addToCarts: 0,
+      purchaseValue: 0,
       ctrSum: 0,
       freqSum: 0,
       days: 0,
@@ -86,6 +97,9 @@ export async function GET(req: Request) {
     existing.impressions += row.impressions ?? 0;
     existing.clicks += row.clicks ?? 0;
     existing.leads += row.leads ?? 0;
+    existing.purchases += row.purchases ?? 0;
+    existing.addToCarts += row.addToCarts ?? 0;
+    existing.purchaseValue += row.purchaseValue ?? 0;
     existing.ctrSum += row.ctr ?? 0;
     existing.freqSum += row.frequency ?? 0;
     existing.days += 1;
@@ -194,6 +208,18 @@ export async function GET(req: Request) {
       const impressions = dateFilterActive ? agg?.impressions ?? 0 : agg?.impressions ?? ad.impressions ?? 0;
       const clicks = dateFilterActive ? agg?.clicks ?? 0 : agg?.clicks ?? ad.clicks ?? 0;
       const leads = dateFilterActive ? agg?.leads ?? 0 : agg?.leads ?? ad.leads ?? 0;
+      // F-76: prefer the windowed aggregate when a date filter is
+      // active; otherwise fall back to the lifetime totals on the ad
+      // row (matching the same precedence used for spend/leads etc).
+      const purchases = dateFilterActive
+        ? agg?.purchases ?? 0
+        : agg?.purchases ?? ad.purchases ?? 0;
+      const addToCarts = dateFilterActive
+        ? agg?.addToCarts ?? 0
+        : agg?.addToCarts ?? ad.addToCarts ?? 0;
+      const purchaseValue = dateFilterActive
+        ? agg?.purchaseValue ?? 0
+        : agg?.purchaseValue ?? ad.purchaseValue ?? 0;
       const days = agg?.days ?? 0;
 
       // CPL only makes sense when there is real spend AND at least one lead.
@@ -243,6 +269,9 @@ export async function GET(req: Request) {
         impressions,
         clicks,
         leads,
+        purchases,
+        addToCarts,
+        purchaseValue,
         cpl,
         ctr,
         frequency,

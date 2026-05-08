@@ -25,8 +25,23 @@ export interface MetaInsight {
   ctr?: string;
   frequency?: string;
   actions?: Array<{ action_type: string; value: string }>;
+  // F-76: action_values carries the RM total for each action_type (e.g.
+  // total purchase value). Required to compute ROAS without storing a
+  // derived column.
+  action_values?: Array<{ action_type: string; value: string }>;
   date_start?: string;
   date_stop?: string;
+}
+
+// F-76: Meta returns purchase / add_to_cart counts under several
+// action_type strings depending on whether the conversion fires from
+// the pixel, an offsite event, or an onsite shop. Match on the core
+// noun so we capture them regardless of namespace.
+function isPurchaseAction(actionType: string): boolean {
+  return /\bpurchase\b/i.test(actionType);
+}
+function isAddToCartAction(actionType: string): boolean {
+  return /\badd_to_cart\b/i.test(actionType);
 }
 
 // Meta error codes that are retryable (rate limit / transient throttling).
@@ -227,6 +242,10 @@ async function upsertAd(
     impressions: number;
     clicks: number;
     leads: number;
+    // F-76: standalone purchase / ATC counts + RM purchase value.
+    purchases: number;
+    addToCarts: number;
+    purchaseValue: number;
   },
 ): Promise<string> {
   const existing = await db.query.metaAds.findFirst({
@@ -245,6 +264,9 @@ async function upsertAd(
         impressions: row.impressions,
         clicks: row.clicks,
         leads: row.leads,
+        purchases: row.purchases,
+        addToCarts: row.addToCarts,
+        purchaseValue: row.purchaseValue,
         adSetId,
         syncedAt: new Date(),
       })
@@ -267,6 +289,9 @@ async function upsertAd(
     impressions: row.impressions,
     clicks: row.clicks,
     leads: row.leads,
+    purchases: row.purchases,
+    addToCarts: row.addToCarts,
+    purchaseValue: row.purchaseValue,
     syncedAt: new Date(),
     createdAt: new Date(),
   });
@@ -283,6 +308,9 @@ async function upsertDailyInsight(
     impressions: number;
     clicks: number;
     leads: number;
+    purchases: number;
+    addToCarts: number;
+    purchaseValue: number;
     cpl: number | null;
     ctr: number | null;
     frequency: number | null;
@@ -299,6 +327,9 @@ async function upsertDailyInsight(
         impressions: row.impressions,
         clicks: row.clicks,
         leads: row.leads,
+        purchases: row.purchases,
+        addToCarts: row.addToCarts,
+        purchaseValue: row.purchaseValue,
         cpl: row.cpl,
         ctr: row.ctr,
         frequency: row.frequency,
@@ -316,6 +347,9 @@ async function upsertDailyInsight(
     impressions: row.impressions,
     clicks: row.clicks,
     leads: row.leads,
+    purchases: row.purchases,
+    addToCarts: row.addToCarts,
+    purchaseValue: row.purchaseValue,
     cpl: row.cpl,
     ctr: row.ctr,
     frequency: row.frequency,
@@ -459,8 +493,10 @@ export async function syncAdsWithInsights(
     const timeRange = JSON.stringify(chunk);
     try {
       const chunkInsights = (await fetchAllPages(`act_${metaAccountId}/insights`, accessToken, {
+        // F-76: action_values added so we can compute ROAS
+        // (purchase_value / spend) and surface it as a tile metric.
         fields:
-          "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,ctr,frequency,actions,date_start,date_stop",
+          "ad_id,ad_name,adset_id,campaign_id,spend,impressions,clicks,ctr,frequency,actions,action_values,date_start,date_stop",
         level: "ad",
         time_range: timeRange,
         time_increment: "1",
@@ -496,6 +532,9 @@ export async function syncAdsWithInsights(
     impressions: number;
     clicks: number;
     leads: number;
+    purchases: number;
+    addToCarts: number;
+    purchaseValue: number;
     ctrSum: number;
     freqSum: number;
     days: number;
@@ -509,6 +548,9 @@ export async function syncAdsWithInsights(
     impressions: number;
     clicks: number;
     leads: number;
+    purchases: number;
+    addToCarts: number;
+    purchaseValue: number;
     cpl: number | null;
     ctr: number;
     frequency: number;
@@ -524,11 +566,34 @@ export async function syncAdsWithInsights(
     const dateStr = insight.date_start?.split("T")[0] || today.toISOString().split("T")[0];
 
     let convCount = 0;
+    let purchaseCount = 0;
+    let addToCartCount = 0;
     for (const action of insight.actions || []) {
       if (matchesActionType(action.action_type, costActionType)) {
         convCount += parseInt(action.value || "0");
       }
+      // F-76: track purchase / ATC counts independently of the brand's
+      // chosen cost metric so a lead-gen brand can still surface
+      // purchase numbers if Meta is firing them.
+      if (isPurchaseAction(action.action_type)) {
+        purchaseCount += parseInt(action.value || "0");
+      }
+      if (isAddToCartAction(action.action_type)) {
+        addToCartCount += parseInt(action.value || "0");
+      }
     }
+
+    // F-76: purchase value (RM) for ROAS. action_values entries match
+    // the same action_type strings as actions[]; we only sum the
+    // purchase variants. parseFloat — Meta returns these as decimal
+    // strings ("1234.56").
+    let purchaseValue = 0;
+    for (const av of insight.action_values || []) {
+      if (isPurchaseAction(av.action_type)) {
+        purchaseValue += parseFloat(av.value || "0");
+      }
+    }
+
     const cpl = convCount > 0 ? spend / convCount : null;
 
     const existing = adTotals.get(insight.ad_id) || {
@@ -538,6 +603,9 @@ export async function syncAdsWithInsights(
       impressions: 0,
       clicks: 0,
       leads: 0,
+      purchases: 0,
+      addToCarts: 0,
+      purchaseValue: 0,
       ctrSum: 0,
       freqSum: 0,
       days: 0,
@@ -546,6 +614,9 @@ export async function syncAdsWithInsights(
     existing.impressions += impressions;
     existing.clicks += clicks;
     existing.leads += convCount;
+    existing.purchases += purchaseCount;
+    existing.addToCarts += addToCartCount;
+    existing.purchaseValue += purchaseValue;
     existing.ctrSum += ctr;
     existing.freqSum += frequency;
     existing.days += 1;
@@ -559,6 +630,9 @@ export async function syncAdsWithInsights(
       impressions,
       clicks,
       leads: convCount,
+      purchases: purchaseCount,
+      addToCarts: addToCartCount,
+      purchaseValue,
       cpl,
       ctr,
       frequency,
@@ -589,6 +663,9 @@ export async function syncAdsWithInsights(
       impressions: totals.impressions,
       clicks: totals.clicks,
       leads: totals.leads,
+      purchases: totals.purchases,
+      addToCarts: totals.addToCarts,
+      purchaseValue: totals.purchaseValue,
     });
   }
 
@@ -604,6 +681,9 @@ export async function syncAdsWithInsights(
       impressions: row.impressions,
       clicks: row.clicks,
       leads: row.leads,
+      purchases: row.purchases,
+      addToCarts: row.addToCarts,
+      purchaseValue: row.purchaseValue,
       cpl: row.cpl,
       ctr: row.ctr,
       frequency: row.frequency,

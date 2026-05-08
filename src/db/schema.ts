@@ -835,6 +835,13 @@ export const metaAds = sqliteTable("meta_ads", {
   impressions: integer("impressions").notNull().default(0),
   clicks: integer("clicks").notNull().default(0),
   leads: integer("leads").notNull().default(0),
+  // F-76: standalone counts independent of the brand's chosen cost
+  // metric, so ATC / purchase tiles work even when costMetric is "lead".
+  // purchaseValue is RM value from action_values[]; ROAS is computed at
+  // read time as purchase_value / spend.
+  purchases: integer("purchases").notNull().default(0),
+  addToCarts: integer("add_to_carts").notNull().default(0),
+  purchaseValue: real("purchase_value").notNull().default(0),
   syncedAt: integer("synced_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
@@ -851,6 +858,10 @@ export const adDailyInsights = sqliteTable("ad_daily_insights", {
   impressions: integer("impressions").notNull().default(0),
   clicks: integer("clicks").notNull().default(0),
   leads: integer("leads").notNull().default(0),
+  // F-76: per-day counterparts of the same fields.
+  purchases: integer("purchases").notNull().default(0),
+  addToCarts: integer("add_to_carts").notNull().default(0),
+  purchaseValue: real("purchase_value").notNull().default(0),
   cpl: real("cpl"),
   ctr: real("ctr"),
   frequency: real("frequency"),
