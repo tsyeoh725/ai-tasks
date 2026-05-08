@@ -563,28 +563,28 @@ export default function AdsPage() {
 
   const groupKeys = Object.keys(grouped);
 
-  // F-77: when grouping by campaign, nest a second level by ad set so
-  // the layout mirrors Meta Ads Manager (Campaigns → Ad Sets → Ads).
-  // Computed once here so the render path can pick between the flat
-  // and nested branches without re-running the groupBy in JSX.
-  const campaignWithAdSets: Array<{
+  // F-77 (revised): grouping by campaign keeps a single outer header
+  // per campaign with a continuous 4-col tile grid beneath. The
+  // first revision split each campaign into one row per ad set,
+  // which looked broken when an ad set had only one ad — a lone tile
+  // sitting in three columns of dead space. Ad set membership is now
+  // surfaced on the tile itself (subtitle line) so the campaign /
+  // ad set / ad hierarchy is still readable without forcing
+  // wasteful row breaks. We still sort campaign-grouped ads by ad
+  // set name FIRST (then the user's chosen sort) so tiles from the
+  // same ad set cluster together visually.
+  const campaignBlocks: Array<{
     campaign: string;
-    total: number;
-    adSets: Array<{
-      adSetName: string;
-      rows: typeof sortedAds;
-    }>;
+    rows: typeof sortedAds;
   }> = groupKey === "campaign"
     ? groupKeys.map((campaign) => {
-        const rows = grouped[campaign];
-        const byAdSet = groupBy(rows, (e) => e.ad.adSetName || "Uncategorized");
-        // Preserve the spend-sorted order within each adset (groupBy
-        // is insertion-ordered and `rows` is already sortedAds).
-        const adSets = Object.keys(byAdSet).map((adSetName) => ({
-          adSetName,
-          rows: byAdSet[adSetName],
-        }));
-        return { campaign, total: rows.length, adSets };
+        const rows = [...grouped[campaign]].sort((a, b) => {
+          const aSet = a.ad.adSetName || "";
+          const bSet = b.ad.adSetName || "";
+          if (aSet === bSet) return 0;
+          return aSet.localeCompare(bSet);
+        });
+        return { campaign, rows };
       })
     : [];
 
@@ -873,47 +873,34 @@ export default function AdsPage() {
           </CardContent>
         </Card>
       ) : groupKey === "campaign" ? (
-        // F-77: Campaign → Ad set → Ads, like Meta Ads Manager.
-        // Outer header is the campaign with its total ad count; the
-        // inner ad-set lane is indented and rule-bordered on the left
-        // so the visual hierarchy reads at a glance.
-        <div className="space-y-8">
-          {campaignWithAdSets.map(({ campaign, total, adSets }) => (
-            <div key={campaign} className="space-y-4">
+        // F-77 (revised): one campaign header per group, then a single
+        // continuous tile grid. Ads are clustered by ad set via the
+        // pre-sort above; each tile labels its own ad set in the
+        // subtitle so the user can still trace tile → ad set without
+        // the layout collapsing into 1-tile rows.
+        <div className="space-y-6">
+          {campaignBlocks.map(({ campaign, rows }) => (
+            <div key={campaign} className="space-y-3">
               <div className="flex items-center gap-2">
                 <h2 className="text-xs uppercase tracking-wider text-gray-700 dark:text-gray-200 font-semibold">
                   {campaign}
                 </h2>
                 <span className="text-[11px] text-gray-400 font-mono">
-                  {total}
+                  {rows.length}
                 </span>
                 <span className="flex-1 h-px bg-gray-200 dark:bg-white/10" />
               </div>
-              <div className="space-y-5 pl-4 border-l border-gray-200 dark:border-white/10">
-                {adSets.map(({ adSetName, rows }) => (
-                  <div key={adSetName} className="space-y-2.5">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
-                        {adSetName}
-                      </h3>
-                      <span className="text-[10px] text-gray-400 font-mono">
-                        {rows.length}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
-                      {rows.map(({ ad, health }) => (
-                        <AdTile
-                          key={ad.id}
-                          ad={ad}
-                          health={health}
-                          brand={brands.find((b) => b.id === ad.brandId)}
-                          isActing={actionLoading === ad.id}
-                          onAction={handleAdAction}
-                          onOpen={() => setDetailAd(ad)}
-                        />
-                      ))}
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                {rows.map(({ ad, health }) => (
+                  <AdTile
+                    key={ad.id}
+                    ad={ad}
+                    health={health}
+                    brand={brands.find((b) => b.id === ad.brandId)}
+                    isActing={actionLoading === ad.id}
+                    onAction={handleAdAction}
+                    onOpen={() => setDetailAd(ad)}
+                  />
                 ))}
               </div>
             </div>
@@ -1062,7 +1049,11 @@ function AdTile({
         </button>
       </div>
 
-      {/* Name + breadcrumb */}
+      {/* Name + breadcrumb. F-77 (revised): include the ad set name
+          on every tile so when the page is grouped by campaign and
+          the per-adset row break is dropped, each tile still tells
+          the user which ad set it belongs to. The full breadcrumb is
+          on the title attribute for hover/keyboard reach. */}
       <div className="mb-4">
         <h3
           className="font-semibold text-gray-900 dark:text-white text-[15px] leading-snug line-clamp-2"
@@ -1070,9 +1061,15 @@ function AdTile({
         >
           {ad.name}
         </h3>
-        <p className="text-xs text-muted-foreground mt-1 truncate">
+        <p
+          className="text-xs text-muted-foreground mt-1 truncate"
+          title={[ad.brandName, ad.campaignName, ad.adSetName]
+            .filter(Boolean)
+            .join(" · ")}
+        >
           {ad.brandName ? <span>{ad.brandName} · </span> : null}
           {ad.campaignName || "—"}
+          {ad.adSetName ? <span> · {ad.adSetName}</span> : null}
         </p>
       </div>
 
