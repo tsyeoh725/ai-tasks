@@ -15,12 +15,7 @@ export type TileMetricKey =
   | "conversions"
   | "spend"
   | "clicks"
-  | "impressions"
-  // F-76: ecom-flavoured tiles backed by the new purchase/ATC/value
-  // columns synced from Meta's actions[] + action_values[].
-  | "purchases"
-  | "addToCarts"
-  | "roas";
+  | "impressions";
 
 export type TileMetricDirection = "higher-better" | "lower-better" | "neutral";
 
@@ -32,11 +27,6 @@ export type TileMetricInput = {
   impressions: number;
   clicks: number;
   leads: number;
-  // F-76: optional so older callers (e.g. a non-purchase brand) compile
-  // unchanged. Defaults treated as zero in compute().
-  purchases?: number;
-  addToCarts?: number;
-  purchaseValue?: number;
 };
 
 export type BrandThresholds = {
@@ -273,71 +263,6 @@ export const TILE_METRICS: TileMetricDef[] = [
       direction: "higher-better",
       breach: false,
     }),
-  },
-  // F-76: standalone ecom metrics. These read the dedicated
-  // purchase / add_to_cart / purchase_value columns the sync now
-  // populates from actions[] + action_values[], so they work
-  // regardless of which action_type the brand chose as its cost
-  // metric (a lead-gen brand can still surface purchase totals).
-  {
-    key: "purchases",
-    defaultLabel: "Purch",
-    longLabel: "Purchases (count)",
-    description: "Count of `purchase` action_type events from Meta.",
-    direction: "higher-better",
-    compute: (ad) => {
-      const v = ad.purchases ?? 0;
-      return {
-        key: "purchases",
-        label: "Purch",
-        value: v,
-        display: compactNumber(v),
-        targetDisplay: null,
-        direction: "higher-better",
-        breach: false,
-      };
-    },
-  },
-  {
-    key: "addToCarts",
-    defaultLabel: "ATC",
-    longLabel: "Add-to-cart count",
-    description: "Count of `add_to_cart` action_type events from Meta.",
-    direction: "higher-better",
-    compute: (ad) => {
-      const v = ad.addToCarts ?? 0;
-      return {
-        key: "addToCarts",
-        label: "ATC",
-        value: v,
-        display: compactNumber(v),
-        targetDisplay: null,
-        direction: "higher-better",
-        breach: false,
-      };
-    },
-  },
-  {
-    key: "roas",
-    defaultLabel: "ROAS",
-    longLabel: "Return on ad spend",
-    description:
-      "Purchase value ÷ spend. Higher is better. Needs purchase value to be tracked on the pixel/CAPI.",
-    direction: "higher-better",
-    compute: (ad) => {
-      const value = ad.purchaseValue ?? 0;
-      const v = ad.spend > 0 && value > 0 ? value / ad.spend : null;
-      return {
-        key: "roas",
-        label: "ROAS",
-        value: v,
-        // ROAS is conventionally shown as "3.42x" — no currency symbol.
-        display: v !== null ? `${v.toFixed(2)}x` : "—",
-        targetDisplay: null,
-        direction: "higher-better",
-        breach: false,
-      };
-    },
   },
 ];
 

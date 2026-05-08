@@ -651,20 +651,12 @@ export default function BrandDetailPage({
         </CardHeader>
         <CardContent>
           {(() => {
-            // F-76: in the picker we read the explicit array directly so
-            // an empty selection stays empty. resolveTileMetrics() is
-            // still the right call at *render time* on the ads page —
-            // there an empty list should fall back to inferred defaults
-            // so tiles aren't blank — but here, treating `[]` as "fall
-            // back to defaults" made the picker snap the three default
-            // chips back on whenever the user tried to deselect them
-            // all. `tileMetrics === undefined` still means inferred
-            // (i.e. the user hasn't customised), `[]` now means
-            // explicitly cleared.
-            const isExplicit = config.tileMetrics !== undefined;
-            const selected: TileMetricKey[] = isExplicit
-              ? (config.tileMetrics as TileMetricKey[])
-              : resolveTileMetrics(undefined, config.costMetric?.actionType);
+            const selected = resolveTileMetrics(
+              config.tileMetrics,
+              config.costMetric?.actionType,
+            );
+            const isExplicit =
+              !!config.tileMetrics && config.tileMetrics.length > 0;
             const toggle = (key: TileMetricKey) => {
               const next = (() => {
                 if (selected.includes(key)) {

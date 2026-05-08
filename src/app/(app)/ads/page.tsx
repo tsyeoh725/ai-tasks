@@ -52,12 +52,6 @@ type AdData = {
   impressions: number;
   clicks: number;
   leads: number;
-  // F-76: ecom counters / value backing the new tile metrics. Default
-  // to 0 client-side; older rows that haven't been resynced post-0011
-  // will read 0 until the next pull repopulates them.
-  purchases: number;
-  addToCarts: number;
-  purchaseValue: number;
   metaAdId: string;
   brandId: string;
   brandName?: string;
@@ -160,11 +154,6 @@ function tileMetricInputFrom(ad: AdData): TileMetricInput {
     impressions: ad.impressions,
     clicks: ad.clicks,
     leads: ad.leads,
-    // F-76: pass through the ecom counters / value so the new tile
-    // metrics (purchases / addToCarts / roas) can compute.
-    purchases: ad.purchases,
-    addToCarts: ad.addToCarts,
-    purchaseValue: ad.purchaseValue,
   };
 }
 
@@ -339,9 +328,6 @@ export default function AdsPage() {
           impressions: (ad.impressions as number) || 0,
           clicks: (ad.clicks as number) || 0,
           leads: (ad.leads as number) || 0,
-          purchases: (ad.purchases as number) || 0,
-          addToCarts: (ad.addToCarts as number) || 0,
-          purchaseValue: (ad.purchaseValue as number) || 0,
           metaAdId: ad.metaAdId as string,
           brandId: ad.brandId as string,
           brandName: (ad.brandName as string | null) ?? undefined,
