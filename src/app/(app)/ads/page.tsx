@@ -232,8 +232,21 @@ function todayISO() {
 
 type SortKey = "spend" | "cpl" | "ctr" | "freq" | "name";
 type GroupKey = "none" | "brand" | "campaign" | "health";
+type TileCols = 3 | 4 | 5 | 6;
 
 const FILTER_STORAGE_KEY = "ads:filters:v1";
+
+// F-78: tile density. Tailwind needs the literal class strings present
+// at build time, so we map each density choice to a static class. Up
+// to lg (≥1024px) the grid stays at 3 cols regardless of choice — at
+// that width 4+ tiles per row are already too narrow to read. The
+// chosen density only kicks in at xl/2xl screens where there's room.
+const TILE_COL_CLASS: Record<TileCols, string> = {
+  3: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3",
+  4: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+  5: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5",
+  6: "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6",
+};
 
 export default function AdsPage() {
   const [selectedBrand, setSelectedBrand] = useState("all");
@@ -248,6 +261,8 @@ export default function AdsPage() {
   const [healthFilter, setHealthFilter] = useState<AdHealth | "all">("all");
   const [sortKey, setSortKey] = useState<SortKey>("spend");
   const [groupKey, setGroupKey] = useState<GroupKey>("none");
+  // F-78: per-row tile count, persisted across sessions.
+  const [tileCols, setTileCols] = useState<TileCols>(4);
   const [syncingAll, setSyncingAll] = useState(false);
   const [auditing, setAuditing] = useState(false);
   const [hydrated, setHydrated] = useState(false);
@@ -271,6 +286,7 @@ export default function AdsPage() {
       healthFilter: AdHealth | "all";
       sortKey: SortKey;
       groupKey: GroupKey;
+      tileCols: TileCols;
     }> = {};
     try {
       const raw = window.sessionStorage.getItem(FILTER_STORAGE_KEY);
@@ -286,6 +302,12 @@ export default function AdsPage() {
     if (saved.healthFilter) setHealthFilter(saved.healthFilter);
     if (saved.sortKey) setSortKey(saved.sortKey);
     if (saved.groupKey) setGroupKey(saved.groupKey);
+    // Validate the saved tile-cols against the allowed set — anything
+    // else (a hand-edited storage value, an old build's enum) silently
+    // falls back to the default rather than producing an invalid grid.
+    if (saved.tileCols && [3, 4, 5, 6].includes(saved.tileCols)) {
+      setTileCols(saved.tileCols);
+    }
     setHydrated(true);
   }, []);
 
@@ -301,6 +323,7 @@ export default function AdsPage() {
           healthFilter,
           sortKey,
           groupKey,
+          tileCols,
         }),
       );
     } catch {
@@ -314,6 +337,7 @@ export default function AdsPage() {
     healthFilter,
     sortKey,
     groupKey,
+    tileCols,
   ]);
 
   const fetchData = useCallback(async () => {
@@ -840,6 +864,35 @@ export default function AdsPage() {
               </SelectContent>
             </Select>
           </div>
+          {/* F-78: tile density picker. Renders as a small segmented
+              control next to Sort/Group rather than a dropdown — at
+              4 options the click-vs-pick tradeoff favours direct
+              buttons, matches the existing "7D / 30D / 90D" pattern
+              in the date row, and saves a click on every change. */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider">
+              Tiles
+            </span>
+            <div className="inline-flex items-center rounded-md border border-gray-200 dark:border-white/10 bg-white dark:bg-white/5 overflow-hidden">
+              {([3, 4, 5, 6] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setTileCols(n)}
+                  className={cn(
+                    "h-8 px-2.5 text-xs font-medium transition-colors border-l first:border-l-0 border-gray-200 dark:border-white/10",
+                    tileCols === n
+                      ? "bg-[#99ff33]/20 text-gray-900 dark:text-white"
+                      : "text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/10",
+                  )}
+                  aria-pressed={tileCols === n}
+                  title={`${n} tiles per row on wide screens`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
           <span className="text-[11px] text-gray-400 font-mono">
             {sortedAds.length} of {ads.length}
           </span>
@@ -848,7 +901,7 @@ export default function AdsPage() {
 
       {/* Tile grid */}
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+        <div className={cn("grid gap-4", TILE_COL_CLASS[tileCols])}>
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
@@ -890,7 +943,7 @@ export default function AdsPage() {
                 </span>
                 <span className="flex-1 h-px bg-gray-200 dark:bg-white/10" />
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+              <div className={cn("grid gap-4", TILE_COL_CLASS[tileCols])}>
                 {rows.map(({ ad, health }) => (
                   <AdTile
                     key={ad.id}
@@ -923,7 +976,7 @@ export default function AdsPage() {
                     <span className="flex-1 h-px bg-gray-200 dark:bg-white/10" />
                   </div>
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+                <div className={cn("grid gap-4", TILE_COL_CLASS[tileCols])}>
                   {rows.map(({ ad, health }) => (
                     <AdTile
                       key={ad.id}
@@ -1049,11 +1102,13 @@ function AdTile({
         </button>
       </div>
 
-      {/* Name + breadcrumb. F-77 (revised): include the ad set name
-          on every tile so when the page is grouped by campaign and
-          the per-adset row break is dropped, each tile still tells
-          the user which ad set it belongs to. The full breadcrumb is
-          on the title attribute for hover/keyboard reach. */}
+      {/* Name + breadcrumb. F-77 (revised v2): the ad set used to live
+          on the same line as brand · campaign; on a typical card
+          width the breadcrumb truncates before reaching the ad set,
+          so the new info was effectively invisible. Now the ad set
+          gets its own dedicated line below the brand · campaign
+          subtitle with its own truncate behaviour, so it's always
+          visible regardless of how long the campaign name is. */}
       <div className="mb-4">
         <h3
           className="font-semibold text-gray-900 dark:text-white text-[15px] leading-snug line-clamp-2"
@@ -1061,16 +1116,19 @@ function AdTile({
         >
           {ad.name}
         </h3>
-        <p
-          className="text-xs text-muted-foreground mt-1 truncate"
-          title={[ad.brandName, ad.campaignName, ad.adSetName]
-            .filter(Boolean)
-            .join(" · ")}
-        >
+        <p className="text-xs text-muted-foreground mt-1 truncate">
           {ad.brandName ? <span>{ad.brandName} · </span> : null}
           {ad.campaignName || "—"}
-          {ad.adSetName ? <span> · {ad.adSetName}</span> : null}
         </p>
+        {ad.adSetName && (
+          <p
+            className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 truncate"
+            title={ad.adSetName}
+          >
+            <span className="text-gray-400 dark:text-gray-500">Ad set · </span>
+            {ad.adSetName}
+          </p>
+        )}
       </div>
 
       {/* Brand-configured metric strip (registry-driven). */}
